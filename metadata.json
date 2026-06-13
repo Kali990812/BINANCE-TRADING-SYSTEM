@@ -1,0 +1,6 @@
+{
+  "name": "Binance Trading Platform",
+  "description": "An immersive real-time cryptocurrency trading simulation styled like Binance, featuring live ticking charts, dynamic order books, mock portfolio wallets, spot order executions, and an integrated Gemini-powered AI Trading Assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
