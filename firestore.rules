@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global lock default safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened control primitive gates
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 1. Users directory rules
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() 
+        && incoming().username is string 
+        && incoming().username.size() <= 64 
+        && incoming().status == "pending";
+      allow update: if isSignedIn() && (
+        incoming().diff(existing()).affectedKeys().hasAny(['balanceUsdt', 'wallet', 'orders', 'alerts', 'chat', 'status'])
+      );
+      allow delete: if false;
+    }
+
+    // 2. Junior Administrator Profiles Rules
+    match /juniorAdmins/{jrId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() 
+        && incoming().username is string 
+        && incoming().username.size() <= 64 
+        && incoming().status == "pending";
+      allow update: if isSignedIn() && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if false;
+    }
+
+    // 3. Transactions Database Rules
+    match /transactions/{txId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() 
+        && incoming().username is string 
+        && incoming().type in ["deposit", "withdrawal"] 
+        && incoming().amount is number 
+        && incoming().status == "pending";
+      allow update: if isSignedIn() && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if false;
+    }
+
+    // 4. Staking Investments Database Rules
+    match /investments/{invId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() 
+        && incoming().username is string 
+        && incoming().planId is string 
+        && incoming().status == "pending";
+      allow update: if isSignedIn() && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if false;
+    }
+
+    // 5. Junior Admin Sandbox Propose Operational Activities Rules
+    match /juniorActivities/{actId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() 
+        && incoming().actor is string 
+        && incoming().action is string 
+        && incoming().status == "pending";
+      allow update: if isSignedIn() && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if false;
+    }
+
+    // 6. Security & Site Control Activity Logging Rules
+    match /siteActivities/{logId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() 
+        && incoming().actor is string 
+        && incoming().action is string;
+      allow update, delete: if false;
+    }
+
+    // 7. Live Database Real-time Parameter Tune Tuning Controls
+    match /systemParameters/{paramId} {
+      allow get, list: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+  }
+}

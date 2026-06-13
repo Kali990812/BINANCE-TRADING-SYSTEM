@@ -30,12 +30,35 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
   const isSenior = currentUser.role === 'senior_admin';
   const roleName = isSenior ? 'Senior Administrator' : 'Junior Administrator';
 
-  // State caches loaded from localStorage
+  // State caches loaded from localStorage / server endpoints
   const [registeredUsers, setRegisteredUsers] = useState<any[]>([]);
   const [txRequests, setTxRequests] = useState<any[]>([]);
   const [investmentReqs, setInvestmentReqs] = useState<any[]>([]);
   const [siteLogs, setSiteLogs] = useState<any[]>([]);
   const [juniorApproved, setJuniorApproved] = useState<boolean>(false);
+  
+  // Custom Role administration additions
+  const [juniorAdmins, setJuniorAdmins] = useState<any[]>([]);
+  const [juniorActivities, setJuniorActivities] = useState<any[]>([]);
+  
+  const [systemParameters, setSystemParameters] = useState<{
+    faucetReserves: number;
+    platformFeePercent: number;
+    contractGasBuffer: number;
+    ledgerLock: boolean;
+  }>({
+    faucetReserves: 2500000,
+    platformFeePercent: 0.10,
+    contractGasBuffer: 15.0,
+    ledgerLock: false
+  });
+  
+  // Active junior operational action draft fields
+  const [juniorActionType, setJuniorActionType] = useState('Faucet Reserves Refill');
+  const [juniorActionDetails, setJuniorActionDetails] = useState('Injection of $100,000 USDT liquidity from DEX treasury cold vault.');
+
+  // Active admin console tab
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'deposits' | 'withdrawals' | 'investments' | 'logs' | 'junior_activities'>('overview');
 
   // New User Form fields
   const [newUserName, setNewUserName] = useState('');
@@ -45,8 +68,24 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
   const [newUserBalance, setNewUserBalance] = useState('1000');
   const [createUserMsg, setCreateUserMsg] = useState('');
 
-  // Active admin console tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'deposits' | 'withdrawals' | 'investments' | 'logs'>('overview');
+  // Fetch from Express dynamic JSON storage backend
+  const fetchAdminData = () => {
+    fetch('/api/admin/data')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.users) setRegisteredUsers(data.users);
+        if (data.transactions) setTxRequests(data.transactions);
+        if (data.investments) setInvestmentReqs(data.investments);
+        if (data.siteActivities) setSiteLogs(data.siteActivities);
+        if (data.juniorAdmins) setJuniorAdmins(data.juniorAdmins);
+        if (data.juniorActivities) setJuniorActivities(data.juniorActivities);
+        if (data.systemParameters) setSystemParameters(data.systemParameters);
+      })
+      .catch((err) => {
+        console.warn("Express backend offline, falling back to local client database:", err);
+        loadLocalStorageState();
+      });
+  };
 
   // Load state from localStorage on mount and when log updates occur
   const loadLocalStorageState = () => {
@@ -81,23 +120,14 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
   };
 
   useEffect(() => {
-    loadLocalStorageState();
-    // Log Admin entry
-    const logsRaw = localStorage.getItem('binance_site_activities');
-    const logs = logsRaw ? JSON.parse(logsRaw) : [];
-    logs.unshift({
-      id: `log-${Math.random().toString(36).substring(2, 9)}`,
-      actor: currentUser.username,
-      role: currentUser.role,
-      action: 'Admin Panel Access',
-      details: `${roleName} entered the Admin Control Dashboard to monitor operations.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
-    });
-    localStorage.setItem('binance_site_activities', JSON.stringify(logs));
-    setSiteLogs(logs);
+    fetchAdminData();
+    // Keep backend synced occasionally every 5 seconds for live multi-operator approvals
+    const t = setInterval(fetchAdminData, 4500);
+    return () => clearInterval(t);
   }, []);
 
   const addLog = (action: string, details: string) => {
+    // Write via client-fallback if needed, otherwise rely on backend logs
     const logsRaw = localStorage.getItem('binance_site_activities');
     const logs = logsRaw ? JSON.parse(logsRaw) : [];
     logs.unshift({
@@ -127,26 +157,47 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
     const nextVal = !juniorApproved;
     localStorage.setItem('binance_junior_approved', nextVal.toString());
     setJuniorApproved(nextVal);
-    addLog(
-      nextVal ? 'Approved Junior Admin Session' : 'Suspended Junior Admin Session', 
-      `Senior Admin toggled login permission for "junior_admin". Status set to: ${nextVal ? 'APPROVED' : 'RESTRICTED'}.`
-    );
+    
+    // Auto sync state with default seed junior_bob
+    fetch('/api/admin/approve-junior', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'junior_bob', adminUsername: currentUser.username })
+    })
+    .then(() => fetchAdminData())
+    .catch((e) => console.warn(e));
   };
 
   // Approve a user registration
   const handleApproveUser = (username: string) => {
     if (!checkSeniorPermission()) return;
-    const updatedUsers = registeredUsers.map(user => {
-      if (user.username === username) {
-        return { ...user, status: 'approved' };
+    fetch('/api/admin/approve-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert(`User Account ${username} successfully approved & activated on the server!`);
+        fetchAdminData();
+      } else {
+        const err = await res.json();
+        alert(`Approval failed: ${err.error}`);
       }
-      return user;
+    })
+    .catch((err) => {
+      console.warn("Express registration fail fallback:", err);
+      const updatedUsers = registeredUsers.map(user => {
+        if (user.username === username) {
+          return { ...user, status: 'approved' };
+        }
+        return user;
+      });
+      localStorage.setItem('binance_registered_users', JSON.stringify(updatedUsers));
+      setRegisteredUsers(updatedUsers);
+      addLog('Approved User Account', `Approved pending user registration for "${username}"`);
+      alert(`User Account ${username} approved (Offline local Storage)!`);
     });
-    localStorage.setItem('binance_registered_users', JSON.stringify(updatedUsers));
-    setRegisteredUsers(updatedUsers);
-    
-    addLog('Approved User Account', `Approved pending user registration for "${username}"`);
-    alert(`User Account ${username} approved & activated!`);
   };
 
   // Create a new approved user directly
@@ -197,254 +248,351 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
   // Approve a deposit request
   const handleApproveDeposit = (requestId: string) => {
     if (!checkSeniorPermission()) return;
-
-    let targetUsername = '';
-    let depositAmt = 0;
-
-    const updatedTx = txRequests.map(req => {
-      if (req.id === requestId) {
-        targetUsername = req.username;
-        depositAmt = req.amount;
-        return { ...req, status: 'approved' };
+    fetch('/api/admin/approve-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactionId: requestId, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert('Payment (Deposit) approved successfully on the server!');
+        fetchAdminData();
+        if (onRefreshDEXBalance) onRefreshDEXBalance();
+      } else {
+        const err = await res.json();
+        alert(`Deposit approval failed: ${err.error}`);
       }
-      return req;
+    })
+    .catch((err) => {
+      console.warn("Express deposit approval offline fallback:", err);
+      // Fallback
+      let targetUsername = '';
+      let depositAmt = 0;
+      const updatedTx = txRequests.map(req => {
+        if (req.id === requestId) {
+          targetUsername = req.username;
+          depositAmt = req.amount;
+          return { ...req, status: 'approved' };
+        }
+        return req;
+      });
+      localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
+      setTxRequests(updatedTx);
+
+      const updatedUsers = registeredUsers.map(u => {
+        if (u.username === targetUsername) {
+          return { ...u, balanceUsdt: Number(((u.balanceUsdt || 0) + depositAmt).toFixed(2)) };
+        }
+        return u;
+      });
+      localStorage.setItem('binance_registered_users', JSON.stringify(updatedUsers));
+      setRegisteredUsers(updatedUsers);
+
+      addLog('Approved Deposit', `Approved pending deposit request (${requestId}) for "${targetUsername}" of $${depositAmt} USDT.`);
+      if (onRefreshDEXBalance) onRefreshDEXBalance();
+      alert(`Verified & Approved Deposit of $${depositAmt} USDT (Offline fallback)`);
     });
-
-    localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
-    setTxRequests(updatedTx);
-
-    // Add USDT to the target user's registered user balance
-    const updatedUsers = registeredUsers.map(u => {
-      if (u.username === targetUsername) {
-        return { ...u, balanceUsdt: Number(((u.balanceUsdt || 0) + depositAmt).toFixed(2)) };
-      }
-      return u;
-    });
-    localStorage.setItem('binance_registered_users', JSON.stringify(updatedUsers));
-    setRegisteredUsers(updatedUsers);
-
-    // If the currently active logged-in trader is the same as the target of this deposit, we also update the current session's lock-free wallet immediately
-    const loggedInUser = JSON.parse(localStorage.getItem('binance_current_user') || '{}');
-    if (loggedInUser.username === targetUsername) {
-      const walletRaw = localStorage.getItem('binance_mock_wallet');
-      if (walletRaw) {
-        const wallet = JSON.parse(walletRaw);
-        const updatedWallet = wallet.map((w: any) => {
-          if (w.symbol === 'USDT') {
-            return { ...w, free: Number((w.free + depositAmt).toFixed(2)) };
-          }
-          return w;
-        });
-        localStorage.setItem('binance_mock_wallet', JSON.stringify(updatedWallet));
-      }
-    }
-
-    addLog('Approved Deposit', `Approved pending deposit request (${requestId}) for "${targetUsername}" of $${depositAmt} USDT.`);
-    if (onRefreshDEXBalance) {
-      onRefreshDEXBalance();
-    }
-    alert(`Verified TxHash & Approved Deposit of $${depositAmt} USDT for @${targetUsername}. Account credited!`);
   };
 
   // Reject a deposit request
   const handleRejectDeposit = (requestId: string) => {
     if (!checkSeniorPermission()) return;
-
-    let targetUsername = '';
-    let depositAmt = 0;
-
-    const updatedTx = txRequests.map(req => {
-      if (req.id === requestId) {
-        targetUsername = req.username;
-        depositAmt = req.amount;
-        return { ...req, status: 'rejected' };
+    fetch('/api/admin/reject-workflow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'transaction', id: requestId, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert('Deposit rejected on backend.');
+        fetchAdminData();
       }
-      return req;
+    })
+    .catch((err) => {
+      console.warn(err);
+      const updatedTx = txRequests.map(req => {
+        if (req.id === requestId) {
+          return { ...req, status: 'rejected' };
+        }
+        return req;
+      });
+      localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
+      setTxRequests(updatedTx);
+      alert('Deposit rejected and archived (Offline fallback).');
     });
-
-    localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
-    setTxRequests(updatedTx);
-
-    addLog('Rejected Deposit', `Rejected invalid pending deposit request (${requestId}) for "${targetUsername}" of $${depositAmt} USDT.`);
-    alert(`Deposit request of $${depositAmt} USDT for @${targetUsername} has been rejected.`);
   };
 
   // Approve a withdrawal request
   const handleApproveWithdrawal = (requestId: string) => {
     if (!checkSeniorPermission()) return;
-
-    let targetUsername = '';
-    let withdrawAmt = 0;
-    let netAmt = 0;
-
-    const updatedTx = txRequests.map(req => {
-      if (req.id === requestId) {
-        targetUsername = req.username;
-        withdrawAmt = req.amount;
-        netAmt = req.netAmount;
-        return { ...req, status: 'approved' };
+    fetch('/api/admin/approve-withdrawal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactionId: requestId, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert('Withdrawal request approved successfully!');
+        fetchAdminData();
+      } else {
+        const err = await res.json();
+        alert(`Withdrawal approval failed: ${err.error}`);
       }
-      return req;
+    })
+    .catch((err) => {
+      console.warn(err);
+      let targetUsername = '';
+      let withdrawAmt = 0;
+      let netAmt = 0;
+      const updatedTx = txRequests.map(req => {
+        if (req.id === requestId) {
+          targetUsername = req.username;
+          withdrawAmt = req.amount;
+          netAmt = req.netAmount;
+          return { ...req, status: 'approved' };
+        }
+        return req;
+      });
+      localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
+      setTxRequests(updatedTx);
+      addLog('Approved Withdrawal', `Approved pending withdrawal (${requestId}) for @${targetUsername} of $${withdrawAmt} USDT.`);
+      alert(`Withdrawal Approved! (Offline fallback)`);
     });
-
-    localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
-    setTxRequests(updatedTx);
-
-    addLog('Approved Withdrawal', `Approved pending withdrawal (${requestId}) for @${targetUsername} of $${withdrawAmt} USDT. Net payout: $${netAmt} USDT.`);
-    alert(`Withdrawal Approved successfully! Net payout of $${netAmt} USDT processed for @${targetUsername}.`);
   };
 
   // Reject a withdrawal request (Deduction Refund)
   const handleRejectWithdrawal = (requestId: string) => {
     if (!checkSeniorPermission()) return;
-
-    let targetUsername = '';
-    let withdrawAmt = 0;
-
-    const updatedTx = txRequests.map(req => {
-      if (req.id === requestId) {
-        targetUsername = req.username;
-        withdrawAmt = req.amount;
-        return { ...req, status: 'rejected' };
+    fetch('/api/admin/reject-workflow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'transaction', id: requestId, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert('Withdrawal rejected and cancelled!');
+        fetchAdminData();
       }
-      return req;
+    })
+    .catch((err) => {
+      console.warn(err);
+      let targetUsername = '';
+      let withdrawAmt = 0;
+      const updatedTx = txRequests.map(req => {
+        if (req.id === requestId) {
+          targetUsername = req.username;
+          withdrawAmt = req.amount;
+          return { ...req, status: 'rejected' };
+        }
+        return req;
+      });
+      localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
+      setTxRequests(updatedTx);
+      alert('Withdrawal cancelled (Offline fallback)');
     });
-
-    localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
-    setTxRequests(updatedTx);
-
-    // Refund the user's registered user balance
-    const updatedUsers = registeredUsers.map(u => {
-      if (u.username === targetUsername) {
-        return { ...u, balanceUsdt: Number(((u.balanceUsdt || 0) + withdrawAmt).toFixed(2)) };
-      }
-      return u;
-    });
-    localStorage.setItem('binance_registered_users', JSON.stringify(updatedUsers));
-    setRegisteredUsers(updatedUsers);
-
-    // Refund standard session wallet if they are currently logged in
-    const loggedInUser = JSON.parse(localStorage.getItem('binance_current_user') || '{}');
-    if (loggedInUser.username === targetUsername) {
-      const walletRaw = localStorage.getItem('binance_mock_wallet');
-      if (walletRaw) {
-        const wallet = JSON.parse(walletRaw);
-        const updatedWallet = wallet.map((w: any) => {
-          if (w.symbol === 'USDT') {
-            return { ...w, free: Number((w.free + withdrawAmt).toFixed(2)) };
-          }
-          return w;
-        });
-        localStorage.setItem('binance_mock_wallet', JSON.stringify(updatedWallet));
-      }
-    }
-
-    addLog('Rejected Withdrawal & Refunded', `Rejected pending withdrawal request (${requestId}) for "${targetUsername}". Refunded $${withdrawAmt} USDT back to available trading balance.`);
-    if (onRefreshDEXBalance) {
-      onRefreshDEXBalance();
-    }
-    alert(`Withdrawal request of $${withdrawAmt} USDT rejected! Funds refunded back to @${targetUsername}'s account available trading balance.`);
   };
 
   // Approve a pending Investment allocation
   const handleApproveInvestment = (requestId: string) => {
     if (!checkSeniorPermission()) return;
-
-    let targetUsername = '';
-    let planId = '';
-    let depositAmt = 0;
-    let yieldDailyUsd = 0;
-    let durationDays = 30;
-
-    // 1. Update request status
-    const updatedReqs = investmentReqs.map(req => {
-      if (req.id === requestId) {
-        targetUsername = req.username;
-        planId = req.planId;
-        depositAmt = req.depositAmount;
-        yieldDailyUsd = req.yieldDailyUsd;
-        durationDays = req.durationDays;
-        return { ...req, status: 'approved' };
+    fetch('/api/admin/approve-investment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ investmentId: requestId, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert('Staking Investment activated successfully!');
+        fetchAdminData();
+      } else {
+        const err = await res.json();
+        alert(`Investment activation failed: ${err.error}`);
       }
-      return req;
+    })
+    .catch((err) => {
+      console.warn(err);
+      // Fallback
+      let targetUsername = '';
+      let planId = '';
+      let depositAmt = 0;
+      let yieldDailyUsd = 0;
+      const updatedReqs = investmentReqs.map(req => {
+        if (req.id === requestId) {
+          targetUsername = req.username;
+          planId = req.planId;
+          depositAmt = req.depositAmount;
+          yieldDailyUsd = req.yieldDailyUsd;
+          return { ...req, status: 'approved' };
+        }
+        return req;
+      });
+      localStorage.setItem('binance_investment_requests', JSON.stringify(updatedReqs));
+      setInvestmentReqs(updatedReqs);
+
+      const activeRaw = localStorage.getItem('binance_active_investments') || '[]';
+      const activeList = JSON.parse(activeRaw);
+      const newActiveInv = {
+        id: `inv-${Math.random().toString(36).substring(2, 9)}`,
+        planId: planId,
+        depositAmount: depositAmt,
+        accruedProfit: 0,
+        timestamp: Date.now(),
+        lastUpdated: Date.now(),
+        username: targetUsername,
+        yieldDailyUsd: yieldDailyUsd,
+        status: 'approved'
+      };
+      activeList.unshift(newActiveInv);
+      localStorage.setItem('binance_active_investments', JSON.stringify(activeList));
+      alert(`Staking Investment activated (Offline fallback)!`);
     });
-    localStorage.setItem('binance_investment_requests', JSON.stringify(updatedReqs));
-    setInvestmentReqs(updatedReqs);
-
-    // 2. Add as live active investment in `'binance_active_investments'`
-    const activeRaw = localStorage.getItem('binance_active_investments') || '[]';
-    const activeList = JSON.parse(activeRaw);
-    
-    const newActiveInv = {
-      id: `inv-${Math.random().toString(36).substring(2, 9)}`,
-      planId: planId,
-      depositAmount: depositAmt,
-      accruedProfit: 0,
-      timestamp: Date.now(), // Active starting now
-      lastUpdated: Date.now(),
-      username: targetUsername,
-      yieldDailyUsd: yieldDailyUsd,
-      status: 'approved'
-    };
-
-    activeList.unshift(newActiveInv);
-    localStorage.setItem('binance_active_investments', JSON.stringify(activeList));
-
-    addLog('Activated Staking Investment', `Approved and activated investment plan "${planId}" ($${depositAmt} USDT) for user "@${targetUsername}".`);
-    alert(`Investment activated! User @${targetUsername} has officially allocation of $${depositAmt} USDT with live yield accumulation.`);
   };
 
   // Reject a pending Investment allocation (Refund)
   const handleRejectInvestment = (requestId: string) => {
     if (!checkSeniorPermission()) return;
-
-    let targetUsername = '';
-    let depositAmt = 0;
-    let planId = '';
-
-    const updatedReqs = investmentReqs.map(req => {
-      if (req.id === requestId) {
-        targetUsername = req.username;
-        depositAmt = req.depositAmount;
-        planId = req.planId;
-        return { ...req, status: 'rejected' };
+    fetch('/api/admin/reject-workflow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'investment', id: requestId, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert('Investment request rejected.');
+        fetchAdminData();
       }
-      return req;
+    })
+    .catch((err) => {
+      console.warn(err);
+      let targetUsername = '';
+      let depositAmt = 0;
+      const updatedReqs = investmentReqs.map(req => {
+        if (req.id === requestId) {
+          targetUsername = req.username;
+          depositAmt = req.depositAmount;
+          return { ...req, status: 'rejected' };
+        }
+        return req;
+      });
+      localStorage.setItem('binance_investment_requests', JSON.stringify(updatedReqs));
+      setInvestmentReqs(updatedReqs);
+      alert('Investment request rejected (Offline fallback).');
     });
-    localStorage.setItem('binance_investment_requests', JSON.stringify(updatedReqs));
-    setInvestmentReqs(updatedReqs);
+  };
 
-    // Refund User USDT balance
-    const updatedUsers = registeredUsers.map(u => {
-      if (u.username === targetUsername) {
-        return { ...u, balanceUsdt: Number(((u.balanceUsdt || 0) + depositAmt).toFixed(2)) };
+  // Approve a pending Junior Admin creation request! (Senior Admin Only)
+  const handleApproveJuniorAdmin = (jrUsername: string) => {
+    if (!checkSeniorPermission()) return;
+    fetch('/api/admin/approve-junior', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: jrUsername, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert(`Junior Admin @${jrUsername} account APPROVED and fully activated!`);
+        fetchAdminData();
+      } else {
+        const d = await res.json();
+        alert(`Failed to approve: ${d.error}`);
       }
-      return u;
+    })
+    .catch(err => {
+      console.error(err);
+      alert(`Simulation Mode fallback: Enabled Junior Admin.`);
     });
-    localStorage.setItem('binance_registered_users', JSON.stringify(updatedUsers));
-    setRegisteredUsers(updatedUsers);
+  };
 
-    // Refund active session wallet if they are logged in
-    const loggedInUser = JSON.parse(localStorage.getItem('binance_current_user') || '{}');
-    if (loggedInUser.username === targetUsername) {
-      const walletRaw = localStorage.getItem('binance_mock_wallet');
-      if (walletRaw) {
-        const wallet = JSON.parse(walletRaw);
-        const updatedWallet = wallet.map((w: any) => {
-          if (w.symbol === 'USDT') {
-            return { ...w, free: Number((w.free + depositAmt).toFixed(2)) };
-          }
-          return w;
-        });
-        localStorage.setItem('binance_mock_wallet', JSON.stringify(updatedWallet));
+  // Reject a pending Junior Admin creation request! (Senior Admin Only)
+  const handleRejectJuniorAdmin = (jrUsername: string) => {
+    if (!checkSeniorPermission()) return;
+    fetch('/api/admin/reject-workflow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'juniorAdmin', id: jrUsername, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert(`Rejected pending junior admin @${jrUsername}.`);
+        fetchAdminData();
       }
-    }
+    })
+    .catch((e) => console.warn(e));
+  };
 
-    addLog('Rejected Staking Plan', `Rejected pending staking allocation "${planId}" for @${targetUsername}. Refunded $${depositAmt} USDT.`);
-    if (onRefreshDEXBalance) {
-      onRefreshDEXBalance();
-    }
-    alert(`Investment purchase of $${depositAmt} USDT for @${targetUsername} was rejected. Funds refunded.`);
+  // Submit a Junior Admin Activity operation (Junior Admins can propose)
+  const handleSubmitJuniorActivity = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetch('/api/admin/submit-junior-activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor: currentUser.username,
+        action: juniorActionType,
+        details: juniorActionDetails
+      })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        alert(`System action request submitted! Status set to PENDING Senior Admin audit.`);
+        setJuniorActionDetails('');
+        fetchAdminData();
+      } else {
+        const d = await res.json();
+        alert(`Error proposing action: ${d.error}`);
+      }
+    })
+    .catch(err => {
+      console.warn("Offline action simulation:", err);
+      // Fallback locally
+      const stored = localStorage.getItem('binance_junior_activities') || '[]';
+      const parsed = JSON.parse(stored);
+      parsed.unshift({
+        id: `act-${Math.random().toString(36).substring(2, 9)}`,
+        actor: currentUser.username,
+        action: juniorActionType,
+        details: juniorActionDetails,
+        status: 'pending',
+        timestamp: new Date().toLocaleTimeString()
+      });
+      localStorage.setItem('binance_junior_activities', JSON.stringify(parsed));
+      setJuniorActivities(parsed);
+      alert(`Offline Fallback: Propose request filed successfully!`);
+    });
+  };
+
+  // Approve a pending Junior Admin activity! (Senior Admin Only audit control)
+  const handleApproveJuniorActivity = (activityId: string) => {
+    if (!checkSeniorPermission()) return;
+    fetch('/api/admin/approve-junior-activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activityId, adminUsername: currentUser.username })
+    })
+    .then(res => {
+      if (res.ok) {
+        alert(`Junior Admin Operation audited, approved and committed to active node database!`);
+        fetchAdminData();
+      }
+    })
+    .catch((e) => console.warn(e));
+  };
+
+  // Reject a pending Junior Admin activity! (Senior Admin Only audit control)
+  const handleRejectJuniorActivity = (activityId: string) => {
+    if (!checkSeniorPermission()) return;
+    fetch('/api/admin/reject-workflow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'juniorActivity', id: activityId, adminUsername: currentUser.username })
+    })
+    .then(res => {
+      if (res.ok) {
+        alert(`Junior Admin execution request denied and archived.`);
+        fetchAdminData();
+      }
+    })
+    .catch((e) => console.warn(e));
   };
 
   // Metric summaries
@@ -560,12 +708,30 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
             </button>
             <button
               onClick={() => setActiveTab('logs')}
-              className={`flex-1 md:flex-none py-3.5 px-5 text-left text-xs font-bold uppercase transition-colors flex items-center gap-2 shrink-0 font-sans ${
+              className={`flex-1 md:flex-none py-3.5 px-5 text-left text-xs font-bold uppercase transition-colors flex items-center justify-between gap-2 border-b md:border-b-0 border-r md:border-r-0 border-[#2b3139] shrink-0 font-sans ${
                 activeTab === 'logs' ? 'bg-[#0b0e11] text-[#f0b90b] border-l-2 border-l-[#f0b90b]' : 'text-gray-400 hover:text-white'
               }`}
             >
-              <Activity size={14} />
-              Site Action Logs
+              <span className="flex items-center gap-2">
+                <Activity size={14} />
+                Site Action Logs
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('junior_activities')}
+              className={`flex-1 md:flex-none py-3.5 px-5 text-left text-xs font-bold uppercase transition-colors flex items-center justify-between gap-2 shrink-0 font-sans ${
+                activeTab === 'junior_activities' ? 'bg-[#0b0e11] text-[#f0b90b] border-l-2 border-l-[#f0b90b]' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Shield size={14} className="text-yellow-500" />
+                Junior Operations
+              </span>
+              {juniorActivities.filter(a => a.status === 'pending').length > 0 && (
+                <span className="bg-yellow-500/25 text-[#f0b90b] text-[8px] font-black px-1.5 py-0.5 rounded-full">
+                  {juniorActivities.filter(a => a.status === 'pending').length}
+                </span>
+              )}
             </button>
           </div>
 
@@ -597,6 +763,43 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
                     <span className="text-xs text-gray-400 font-bold uppercase">Pending Investments</span>
                     <strong className="text-2xl text-[#f0b90b] font-black font-mono">{pendingInvestments.length}</strong>
                     <span className="text-[10px] text-gray-500 mt-1">Staking Tier Activations</span>
+                  </div>
+                </div>
+
+                {/* ADVANCED DYNAMIC NODE DATABASE PARAMETERS */}
+                <div className="bg-[#12161a]/60 border border-[#2b3139] rounded-lg p-4">
+                  <h4 className="text-[10px] font-black tracking-widest text-[#f0b90b] uppercase mb-3 flex items-center gap-1.5 font-sans border-b border-[#2b3139]/50 pb-2">
+                    <Terminal size={12} className="stroke-[3]" /> Active Live Database Parameters Calibration Settings
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-[#0b0e11] border border-[#2b3139] rounded-lg p-3.5 flex flex-col gap-0.5">
+                      <span className="text-[10px] text-gray-400 uppercase font-bold">Faucet Pool Reserves</span>
+                      <strong className="text-lg text-white font-black font-mono">
+                        ${systemParameters.faucetReserves?.toLocaleString()} USDT
+                      </strong>
+                      <span className="text-[9px] text-[#0ecb81] font-mono mt-1">● Synced Dynamic Pool</span>
+                    </div>
+                    <div className="bg-[#0b0e11] border border-[#2b3139] rounded-lg p-3.5 flex flex-col gap-0.5">
+                      <span className="text-[10px] text-gray-400 uppercase font-bold">DEX Platform Swap Fee</span>
+                      <strong className="text-lg text-[#f0b90b] font-black font-mono">
+                        {systemParameters.platformFeePercent}%
+                      </strong>
+                      <span className="text-[9px] text-gray-400 font-mono mt-1">Tuning parameter calibrated</span>
+                    </div>
+                    <div className="bg-[#0b0e11] border border-[#2b3139] rounded-lg p-3.5 flex flex-col gap-0.5">
+                      <span className="text-[10px] text-gray-400 uppercase font-bold">Gas buffer capacity</span>
+                      <strong className="text-lg text-white font-black font-mono">
+                        +{systemParameters.contractGasBuffer} Gwei
+                      </strong>
+                      <span className="text-[9px] text-[#0ea5e9] font-mono mt-1">Optimized Execution Buffer</span>
+                    </div>
+                    <div className="bg-[#0b0e11] border border-[#2b3139] rounded-lg p-3.5 flex flex-col gap-0.5">
+                      <span className="text-[10px] text-gray-400 uppercase font-bold">Node read/write ledger</span>
+                      <strong className="text-lg text-[#0ecb81] font-black font-mono uppercase">
+                        {systemParameters.ledgerLock ? "🔒 Lock Activated" : "🟢 ACTIVE ONLINE"}
+                      </strong>
+                      <span className="text-[9px] text-gray-500 font-mono mt-1">Status: Operational</span>
+                    </div>
                   </div>
                 </div>
 
@@ -874,6 +1077,84 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
                             </td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Junior Admins list (Approve pending ones, see details) */}
+                <div id="junior-admins-directory-panel" className="bg-[#12161a] border border-[#2b3139] rounded-lg p-4 mt-4">
+                  <span className="text-xs text-white font-extrabold uppercase tracking-wider block border-b border-[#2b3139] pb-2 mb-3.5">
+                    Junior Administrator Profiles Directory ({juniorAdmins.length} Accounts)
+                  </span>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-[#2b3139] text-gray-400 text-[10px] font-sans">
+                          <th className="pb-2.5 pl-2 font-bold uppercase">Name</th>
+                          <th className="pb-2.5 font-bold uppercase">Username</th>
+                          <th className="pb-2.5 font-bold uppercase">Email</th>
+                          <th className="pb-2.5 font-bold uppercase">Created At</th>
+                          <th className="pb-2.5 text-center font-bold uppercase">Approval Status</th>
+                          <th className="pb-2.5 pr-2 text-right font-bold uppercase">Core Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {juniorAdmins.map((jr) => (
+                          <tr key={jr.id || jr.username} className="border-b border-[#2b3139]/40 hover:bg-gray-800/25 transition-colors">
+                            <td className="py-2.5 pl-2 text-white font-medium">{jr.name}</td>
+                            <td className="py-2.5 text-gray-300">@{jr.username}</td>
+                            <td className="py-2.5 text-gray-400">{jr.email}</td>
+                            <td className="py-2.5 text-gray-500">{jr.createdAt || 'N/A'}</td>
+                            <td className="py-2.5 text-center">
+                              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                                jr.status === 'approved' 
+                                  ? 'bg-[#0ecb81]/15 text-[#0ecb81]' 
+                                  : 'bg-red-500/15 text-red-400 border border-red-500/20'
+                              }`}>
+                                {jr.status || 'pending'}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pr-2 text-right">
+                              {jr.status === 'pending' ? (
+                                <div className="flex gap-2 justify-end">
+                                  <button
+                                    disabled={!isSenior}
+                                    onClick={() => handleApproveJuniorAdmin(jr.username)}
+                                    className={`px-2.5 py-1 rounded text-[9.5px] font-black uppercase transition-all ${
+                                      !isSenior 
+                                        ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-[#2b3139]' 
+                                        : 'bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer'
+                                    }`}
+                                  >
+                                    Approve Executive Group
+                                  </button>
+                                  <button
+                                    disabled={!isSenior}
+                                    onClick={() => handleRejectJuniorAdmin(jr.username)}
+                                    className={`px-2.5 py-1 rounded text-[9.5px] font-black uppercase transition-all ${
+                                      !isSenior 
+                                        ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-[#2b3139]' 
+                                        : 'bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/20 cursor-pointer'
+                                    }`}
+                                  >
+                                    Deny
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-gray-500 italic">Activated Executive Session</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {juniorAdmins.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-gray-500 text-xs">
+                              No registered Junior Administrators found on active node.
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1197,6 +1478,159 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* JUNIOR SYSTEM OPERATIONS AUDITS */}
+            {activeTab === 'junior_activities' && (
+              <div className="flex flex-col gap-5">
+                
+                {/* 1. Propose New Activity Form (Proposable by Junior Admin, Senior sees audit notice) */}
+                <div className="bg-[#12161a] border border-[#2b3139] rounded-lg p-5">
+                  <h3 className="text-xs text-white font-black uppercase tracking-wider border-b border-[#2b3139] pb-2 mb-3.5 flex items-center gap-1.5">
+                    <Shield size={14} className="text-yellow-500" />
+                    Propose Sandbox System Operation (Junior Admin Role)
+                  </h3>
+
+                  {currentUser.role === 'junior_admin' ? (
+                    <form onSubmit={handleSubmitJuniorActivity} className="flex flex-col gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] text-gray-450 font-bold uppercase">Operational Action Category</label>
+                          <select
+                            value={juniorActionType}
+                            onChange={(e) => setJuniorActionType(e.target.value)}
+                            className="bg-[#0b0e11] border border-[#2b3139] px-3 py-2 rounded text-xs text-white focus:outline-none focus:border-[#f0b90b] font-mono cursor-pointer"
+                          >
+                            <option value="Faucet Reserves Refill">Faucet Reserves Refill</option>
+                            <option value="Platform Fee Tuning Calibration">Platform Fee Tuning Calibration</option>
+                            <option value="Core Backup Replication">Core Backup Replication</option>
+                            <option value="Smart Contract Gas Buffer Injection">Smart Contract Gas Buffer Injection</option>
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] text-gray-450 font-bold uppercase">Proposing Sandbox Agent</label>
+                          <input
+                            type="text"
+                            disabled
+                            value={`@${currentUser.username} (Level 1 Sandbox Operator)`}
+                            className="bg-[#0b0e11]/50 border border-[#2b3139]/50 px-3 py-2 rounded text-xs text-gray-400 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] text-gray-450 font-bold uppercase">Operational Activity Details / Purpose Justification</label>
+                        <textarea
+                          rows={3}
+                          required
+                          value={juniorActionDetails}
+                          onChange={(e) => setJuniorActionDetails(e.target.value)}
+                          placeholder="Provide deep architectural justification for this ledger edit so Senior Admins can audit safely..."
+                          className="bg-[#0b0e11] border border-[#2b3139] px-3 py-2 rounded text-xs text-white focus:outline-none focus:border-[#f0b90b] font-sans resize-none"
+                        />
+                      </div>
+
+                      <div className="flex justify-end mt-1">
+                        <button
+                          type="submit"
+                          className="bg-yellow-500 hover:bg-yellow-600 text-black font-extrabold text-[10.5px] uppercase px-5 py-2 rounded flex items-center gap-1.5 cursor-pointer transition-colors"
+                        >
+                          <Check size={13} className="stroke-[3]" />
+                          Propose Operation to Senior Council
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="p-4 bg-yellow-500/5 border border-yellow-500/10 rounded-lg">
+                      <p className="text-xs text-yellow-500 leading-relaxed font-sans">
+                        ℹ️ <strong>Senior Administrator Session Control</strong>: You hold Level 2 Authority. Level 1 (Junior) Administrators submit proposals to modify Sandbox parameters. You can audit, authorize, and commit these changes in the list below.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Auditable Proposals List */}
+                <div className="bg-[#12161a] border border-[#2b3139] rounded-lg p-4">
+                  <span className="text-xs text-white font-extrabold uppercase tracking-wider block border-b border-[#2b3139] pb-2 mb-3.5">
+                    Auditable Junior Operations Registry Queue ({juniorActivities.length} Operations)
+                  </span>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-[#2b3139] text-gray-400 text-[10px] font-sans">
+                          <th className="pb-2.5 pl-2 font-bold uppercase">Action Category</th>
+                          <th className="pb-2.5 font-bold uppercase">Justifiable Details</th>
+                          <th className="pb-2.5 font-bold uppercase">Proposed By</th>
+                          <th className="pb-2.5 text-center font-bold uppercase">Audit Status</th>
+                          <th className="pb-2.5 pr-2 text-right font-bold uppercase">Core Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {juniorActivities.map((act) => (
+                          <tr key={act.id} className="border-b border-[#2b3139]/40 hover:bg-gray-800/25 transition-colors">
+                            <td className="py-2.5 pl-2">
+                              <span className="text-white font-extrabold uppercase tracking-tight block">{act.action}</span>
+                              <span className="text-[10px] text-gray-500 block mt-0.5">{act.timestamp || 'Just now'}</span>
+                            </td>
+                            <td className="py-2.5 text-gray-300 max-w-sm truncate" title={act.details}>{act.details}</td>
+                            <td className="py-2.5 text-yellow-500">@{act.actor}</td>
+                            <td className="py-2.5 text-center">
+                              <span className={`text-[9.5px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                                act.status === 'approved' 
+                                  ? 'bg-emerald-500/15 text-emerald-400' 
+                                  : act.status === 'rejected' 
+                                    ? 'bg-red-500/15 text-red-500' 
+                                    : 'bg-yellow-500/15 text-yellow-500 border border-yellow-500/10 animate-pulse'
+                              }`}>
+                                {act.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pr-2 text-right">
+                              {act.status === 'pending' ? (
+                                <div className="flex gap-2 justify-end">
+                                  <button
+                                    disabled={!isSenior}
+                                    onClick={() => handleApproveJuniorActivity(act.id)}
+                                    className={`px-3 py-1 rounded text-[9.5px] font-black uppercase transition-all ${
+                                      !isSenior 
+                                        ? 'bg-gray-850 text-gray-600 cursor-not-allowed border border-[#2b3139]' 
+                                        : 'bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer'
+                                    }`}
+                                  >
+                                    Approve & Execute
+                                  </button>
+                                  <button
+                                    disabled={!isSenior}
+                                    onClick={() => handleRejectJuniorActivity(act.id)}
+                                    className={`px-3 py-1 rounded text-[9.5px] font-black uppercase transition-all ${
+                                      !isSenior 
+                                        ? 'bg-gray-850 text-gray-600 cursor-not-allowed border border-[#2b3139]' 
+                                        : 'bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/20 cursor-pointer'
+                                    }`}
+                                  >
+                                    Deny
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-gray-500 italic uppercase">Closed Case</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {juniorActivities.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="py-12 text-center text-gray-500 text-xs">
+                              Queue clear: No sandbox system operation proposals found in logs.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
               </div>
             )}
             

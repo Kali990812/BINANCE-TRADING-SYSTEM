@@ -241,6 +241,58 @@ export default function App() {
     ];
   });
 
+  // Load and synchronize user state from backend database on mount or session change
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'user') {
+      fetch(`/api/user/get-state?username=${currentUser.username}`)
+        .then((res) => {
+          if (!res.ok) throw new Error("Backend offline fallback");
+          return res.json();
+        })
+        .then((data) => {
+          if (data.wallet) {
+            setWallet(data.wallet);
+            localStorage.setItem('binance_mock_wallet', JSON.stringify(data.wallet));
+          }
+          if (data.orders) {
+            setOrders(data.orders);
+            localStorage.setItem('binance_mock_orders', JSON.stringify(data.orders));
+          }
+          if (data.alerts) {
+            setAlerts(data.alerts);
+            localStorage.setItem('binance_mock_alerts', JSON.stringify(data.alerts));
+          }
+          if (data.chat) {
+            setChatHistory(data.chat);
+            localStorage.setItem('binance_ai_chat', JSON.stringify(data.chat));
+          }
+        })
+        .catch((err) => {
+          console.warn("Express backend sync offline, using browser database cache:", err);
+        });
+    }
+  }, [currentUser]);
+
+  // Synchronize state changes back to DB (Debounced slightly to prevent spamming requests)
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'user') {
+      const delayCommit = setTimeout(() => {
+        fetch('/api/user/sync-state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: currentUser.username,
+            wallet,
+            orders,
+            alerts,
+            chat: chatHistory
+          })
+        }).catch(e => console.warn("Backend sync offline: ", e));
+      }, 800);
+      return () => clearTimeout(delayCommit);
+    }
+  }, [wallet, orders, alerts, chatHistory, currentUser]);
+
   // Helper to add unified notification
   const addNotification = (
     type: 'order_filled' | 'price_alert' | 'liquidation_warning' | 'liquidation_event',

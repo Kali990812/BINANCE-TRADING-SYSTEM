@@ -1,0 +1,144 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile state, including wallet balances, active orders, rate alerts, and chat history with AI coach.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "balanceUsdt": { "type": "number" },
+        "wallet": { "type": "array" },
+        "orders": { "type": "array" },
+        "alerts": { "type": "array" },
+        "chat": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username", "email", "status"]
+    },
+    "JuniorAdmin": {
+      "title": "JuniorAdmin",
+      "description": "Junior administrator profiles authorized to draft sandbox operations awaiting senior approval.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username", "email", "status"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial deposit and withdrawal transactions executed on the simulator.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "type": { "type": "string", "enum": ["deposit", "withdrawal"] },
+        "amount": { "type": "number" },
+        "netAmount": { "type": "number" },
+        "fee": { "type": "number" },
+        "network": { "type": "string" },
+        "address": { "type": "string" },
+        "refHash": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "username", "type", "amount", "status"]
+    },
+    "Investment": {
+      "title": "Investment",
+      "description": "User subscription plans to active dynamic yield staking nodes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "planId": { "type": "string" },
+        "depositAmount": { "type": "number" },
+        "yieldDailyUsd": { "type": "number" },
+        "durationDays": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "username", "planId", "depositAmount", "status"]
+    },
+    "JuniorActivity": {
+      "title": "JuniorActivity",
+      "description": "Proposals for operations drafted by junior administrators requiring auditing and approvals.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "actor": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "actor", "action", "status"]
+    },
+    "SiteActivity": {
+      "title": "SiteActivity",
+      "description": "Low-level system security action and audit logging logs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "actor": { "type": "string" },
+        "role": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "actor", "action", "timestamp"]
+    },
+    "SystemParameters": {
+      "title": "SystemParameters",
+      "description": "Calibration factors for the blockchain exchange dynamic systems network.",
+      "type": "object",
+      "properties": {
+        "faucetReserves": { "type": "number" },
+        "platformFeePercent": { "type": "number" },
+        "contractGasBuffer": { "type": "number" },
+        "ledgerLock": { "type": "boolean" }
+      },
+      "required": ["faucetReserves", "platformFeePercent", "contractGasBuffer", "ledgerLock"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User security credentials, wallet items free/locked, orders, and configuration details."
+    },
+    "/juniorAdmins/{jrId}": {
+      "schema": "JuniorAdmin",
+      "description": "Junior administrator login and registration pending profiles registry."
+    },
+    "/transactions/{txId}": {
+      "schema": "Transaction",
+      "description": "Deposits, transfers, and withdrawal actions on the ledger."
+    },
+    "/investments/{invId}": {
+      "schema": "Investment",
+      "description": "Staking allocations and dynamic reward parameters tracker."
+    },
+    "/juniorActivities/{actId}": {
+      "schema": "JuniorActivity",
+      "description": "Operation requests filed by low level sandbox moderators."
+    },
+    "/siteActivities/{logId}": {
+      "schema": "SiteActivity",
+      "description": "Low level audit logs of site action tracks."
+    },
+    "/systemParameters/{paramId}": {
+      "schema": "SystemParameters",
+      "description": "The calibration constants tuned by senior admin approvals."
+    }
+  }
+}

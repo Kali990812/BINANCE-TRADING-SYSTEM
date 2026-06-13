@@ -29,6 +29,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [signupRole, setSignupRole] = useState<'user' | 'junior_admin'>('user');
   
   // Forgot password states
   const [forgotEmail, setForgotEmail] = useState('');
@@ -187,11 +188,19 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
     setIsLoading(true);
     setMsgNotice(null);
 
-    // Simulate standard authenticating roundtrip
-    setTimeout(() => {
+    // Communicate with backend server to log in
+    fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: emailOrUser, password })
+    })
+    .then(async (res) => {
       setIsLoading(false);
-      const displayUser = emailOrUser.includes('@') ? emailOrUser.split('@')[0] : emailOrUser;
-      const lowerUser = displayUser.toLowerCase();
+      const data = await res.json();
+      if (!res.ok) {
+        setErrors({ password: data.error || 'Login verification failed.' });
+        return;
+      }
 
       if (rememberMe) {
         localStorage.setItem('auth_remembered_username', emailOrUser);
@@ -199,92 +208,93 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
         localStorage.removeItem('auth_remembered_username');
       }
 
-      // Senior Admin routing
-      if (lowerUser === 'senior_admin' && password === 'admin') {
-        const storedLogsRaw = localStorage.getItem('binance_site_activities');
-        const siteLogs = storedLogsRaw ? JSON.parse(storedLogsRaw) : [];
-        siteLogs.unshift({
-          id: `log-${Math.random().toString(36).substring(2, 9)}`,
-          actor: 'senior_admin',
-          role: 'senior_admin',
-          action: 'Administrator Session',
-          details: 'Senior Admin successfully logged into Command Center.',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
-        });
-        localStorage.setItem('binance_site_activities', JSON.stringify(siteLogs));
+      onLoginSuccess({
+        name: data.name,
+        username: data.username,
+        email: data.email,
+        role: data.role,
+        status: data.status
+      } as any);
+    })
+    .catch((err) => {
+      console.warn("API login failed, running offline fallback check", err);
+      // Simulate standard authenticating roundtrip fallback
+      setTimeout(() => {
+        setIsLoading(false);
+        const displayUser = emailOrUser.includes('@') ? emailOrUser.split('@')[0] : emailOrUser;
+        const lowerUser = displayUser.toLowerCase();
 
-        onLoginSuccess({
-          name: 'Senior Administrator',
-          username: 'senior_admin',
-          email: 'senior@binance-sim.net',
-          role: 'senior_admin'
-        } as any);
-        return;
-      }
+        if (rememberMe) {
+          localStorage.setItem('auth_remembered_username', emailOrUser);
+        } else {
+          localStorage.removeItem('auth_remembered_username');
+        }
 
-      // Junior Admin routing
-      if (lowerUser === 'junior_admin' && password === 'admin') {
-        const isApproved = localStorage.getItem('binance_junior_approved') === 'true';
-        if (!isApproved) {
-          setErrors({ password: 'Junior Admin portal session is PENDING Senior Admin approval. Please contact the Senior Admin.' });
+        // Senior Admin routing
+        if (lowerUser === 'senior_admin' && password === 'admin') {
+          onLoginSuccess({
+            name: 'Senior Administrator',
+            username: 'senior_admin',
+            email: 'senior@binance-sim.net',
+            role: 'senior_admin',
+            status: 'approved'
+          } as any);
           return;
         }
 
-        const storedLogsRaw = localStorage.getItem('binance_site_activities');
-        const siteLogs = storedLogsRaw ? JSON.parse(storedLogsRaw) : [];
-        siteLogs.unshift({
-          id: `log-${Math.random().toString(36).substring(2, 9)}`,
-          actor: 'junior_admin',
-          role: 'junior_admin',
-          action: 'Junior Session Access',
-          details: 'Junior Admin logged in with read-only monitor permissions.',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
-        });
-        localStorage.setItem('binance_site_activities', JSON.stringify(siteLogs));
+        // Junior Admin routing
+        if (lowerUser === 'junior_admin' && password === 'admin') {
+          const isApproved = localStorage.getItem('binance_junior_approved') === 'true';
+          if (!isApproved) {
+            setErrors({ password: 'Junior Admin portal session is PENDING Senior Admin approval. Please contact the Senior Admin.' });
+            return;
+          }
+
+          onLoginSuccess({
+            name: 'Junior Administrator',
+            username: 'junior_admin',
+            email: 'junior@binance-sim.net',
+            role: 'junior_admin',
+            status: 'approved'
+          } as any);
+          return;
+        }
+
+        // Standard user login check
+        const storedUsersRaw = localStorage.getItem('binance_registered_users');
+        let registeredUsers: any[] = [];
+        if (storedUsersRaw) {
+          registeredUsers = JSON.parse(storedUsersRaw);
+        } else {
+          // Seed default users if empty
+          registeredUsers = [
+            { id: 'user-1', name: 'John Doe', username: 'john_doe', email: 'john@binance-sim.net', status: 'approved', balanceUsdt: 24500, createdAt: '2026-06-10 14:32' },
+            { id: 'user-2', name: 'Sarah Connor', username: 'sarah_c', email: 'sarah@binance-sim.net', status: 'approved', balanceUsdt: 5000, createdAt: '2026-06-11 09:12' }
+          ];
+          localStorage.setItem('binance_registered_users', JSON.stringify(registeredUsers));
+        }
+
+        // Check if user exists or is demo
+        const userMatch = registeredUsers.find((u) => u.username === lowerUser);
+        if (!userMatch && lowerUser !== 'demo_trader') {
+          setErrors({ password: 'Account not registered. Please click "Register" tab to create your sandbox portfolio.' });
+          return;
+        }
+
+        // If user exists, log session sign-in
+        const finalName = userMatch ? userMatch.name : (displayUser.charAt(0).toUpperCase() + displayUser.slice(1));
+        const finalEmail = userMatch ? userMatch.email : `${displayUser.toLowerCase()}@binance-sim.net`;
+        const finalStatus = userMatch ? userMatch.status : 'approved';
 
         onLoginSuccess({
-          name: 'Junior Administrator',
-          username: 'junior_admin',
-          email: 'junior@binance-sim.net',
-          role: 'junior_admin'
+          name: finalName,
+          username: lowerUser,
+          email: finalEmail,
+          role: 'user',
+          status: finalStatus
         } as any);
-        return;
-      }
-
-      // Standard user login check
-      const storedUsersRaw = localStorage.getItem('binance_registered_users');
-      let registeredUsers: any[] = [];
-      if (storedUsersRaw) {
-        registeredUsers = JSON.parse(storedUsersRaw);
-      } else {
-        // Seed default users if empty
-        registeredUsers = [
-          { id: 'user-1', name: 'John Doe', username: 'john_doe', email: 'john@binance-sim.net', status: 'approved', balanceUsdt: 24500, createdAt: '2026-06-10 14:32' },
-          { id: 'user-2', name: 'Sarah Connor', username: 'sarah_c', email: 'sarah@binance-sim.net', status: 'approved', balanceUsdt: 5000, createdAt: '2026-06-11 09:12' }
-        ];
-        localStorage.setItem('binance_registered_users', JSON.stringify(registeredUsers));
-      }
-
-      // Check if user exists or is demo
-      const userMatch = registeredUsers.find((u) => u.username === lowerUser);
-      if (!userMatch && lowerUser !== 'demo_trader') {
-        setErrors({ password: 'Account not registered. Please click "Register" tab to create your sandbox portfolio.' });
-        return;
-      }
-
-      // If user exists, log session sign-in
-      const finalName = userMatch ? userMatch.name : (displayUser.charAt(0).toUpperCase() + displayUser.slice(1));
-      const finalEmail = userMatch ? userMatch.email : `${displayUser.toLowerCase()}@binance-sim.net`;
-      const finalStatus = userMatch ? userMatch.status : 'approved';
-
-      onLoginSuccess({
-        name: finalName,
-        username: lowerUser,
-        email: finalEmail,
-        role: 'user',
-        status: finalStatus
-      } as any);
-    }, 1200);
+      }, 1200);
+    });
   };
 
   // Handle Signup submission -> opens code verification stage
@@ -366,48 +376,96 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
           }
 
           const usernameLower = tempUser.username.toLowerCase();
-          
-          // Check if already registered
-          let matchedIndex = registeredUsers.findIndex(u => u.username === usernameLower);
-          
-          const newUserObj = {
-            id: `user-${Math.random().toString(36).substring(2, 9)}`,
-            name: tempUser.name,
-            username: usernameLower,
-            email: tempUser.email,
-            status: 'pending', // Pending sign up!
-            balanceUsdt: 1000,   // Give them some sandbox registration bonus!
-            createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16)
-          };
 
-          if (matchedIndex >= 0) {
-            registeredUsers[matchedIndex] = { ...registeredUsers[matchedIndex], ...newUserObj };
-          } else {
-            registeredUsers.push(newUserObj);
-          }
+          fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: tempUser.name,
+              username: usernameLower,
+              email: tempUser.email,
+              password: password,
+              role: signupRole
+            })
+          })
+          .then(async (res) => {
+            const data = await res.json();
+            if (!res.ok) {
+              setErrors({ otp: data.error || 'Server registration failed.' });
+              return;
+            }
 
-          localStorage.setItem('binance_registered_users', JSON.stringify(registeredUsers));
+            // Client state backup sync
+            const storedUsersRaw = localStorage.getItem('binance_registered_users') || '[]';
+            let regUsers = [];
+            try {
+              regUsers = JSON.parse(storedUsersRaw);
+            } catch (p) {
+              regUsers = [];
+            }
+            const idx = regUsers.findIndex((u: any) => u.username === usernameLower);
+            const savedU = {
+              id: data.user.id,
+              name: tempUser.name,
+              username: usernameLower,
+              email: tempUser.email,
+              status: 'pending',
+              balanceUsdt: signupRole === 'junior_admin' ? 0 : 1000,
+              createdAt: data.user.createdAt
+            };
+            if (idx >= 0) regUsers[idx] = savedU;
+            else regUsers.push(savedU);
+            localStorage.setItem('binance_registered_users', JSON.stringify(regUsers));
 
-          // Log registration action
-          const storedLogsRaw = localStorage.getItem('binance_site_activities');
-          const siteLogs = storedLogsRaw ? JSON.parse(storedLogsRaw) : [];
-          siteLogs.unshift({
-            id: `log-${Math.random().toString(36).substring(2, 9)}`,
-            actor: usernameLower,
-            role: 'user',
-            action: 'Account Signup',
-            details: `A new user account was registered for ${tempUser.name} (${usernameLower}). Status: PENDING SENIOR ADMIN APPROVAL.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
+            onLoginSuccess({
+              name: tempUser.name,
+              username: usernameLower,
+              email: tempUser.email,
+              role: signupRole,
+              status: 'pending'
+            } as any);
+          })
+          .catch((err) => {
+            console.warn("Express registration failed, using client fallback", err);
+            // Fallback to offline registration storage
+            let matchedIndex = registeredUsers.findIndex(u => u.username === usernameLower);
+            const newUserObj = {
+              id: `user-${Math.random().toString(36).substring(2, 9)}`,
+              name: tempUser.name,
+              username: usernameLower,
+              email: tempUser.email,
+              status: 'pending',
+              balanceUsdt: signupRole === 'junior_admin' ? 0 : 1000,
+              createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16)
+            };
+            if (matchedIndex >= 0) {
+              registeredUsers[matchedIndex] = { ...registeredUsers[matchedIndex], ...newUserObj };
+            } else {
+              registeredUsers.push(newUserObj);
+            }
+            localStorage.setItem('binance_registered_users', JSON.stringify(registeredUsers));
+
+            // Log registration action locally
+            const storedLogsRaw = localStorage.getItem('binance_site_activities');
+            const siteLogs = storedLogsRaw ? JSON.parse(storedLogsRaw) : [];
+            siteLogs.unshift({
+              id: `log-${Math.random().toString(36).substring(2, 9)}`,
+              actor: usernameLower,
+              role: signupRole,
+              action: 'Account Signup',
+              details: `A new ${signupRole} account was registered for ${tempUser.name} (${usernameLower}). Status: PENDING SENIOR ADMIN APPROVAL.`,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
+            });
+            localStorage.setItem('binance_site_activities', JSON.stringify(siteLogs));
+
+            onLoginSuccess({
+              name: tempUser.name,
+              username: usernameLower,
+              email: tempUser.email,
+              role: signupRole,
+              status: 'pending'
+            } as any);
           });
-          localStorage.setItem('binance_site_activities', JSON.stringify(siteLogs));
-
-          onLoginSuccess({
-            name: tempUser.name,
-            username: usernameLower,
-            email: tempUser.email,
-            role: 'user',
-            status: 'pending'
-          } as any);
         }
       } else {
         setErrors({ otp: 'Invalid verification pin. Try using "123456" for instant demo match.' });
@@ -1032,6 +1090,42 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
                         <AlertCircle size={9} /> {errors.confirmPassword}
                       </span>
                     )}
+                  </div>
+
+                  {/* Account Role Designation */}
+                  <div className="flex flex-col gap-1.5 p-3 rounded-2xl bg-[#12161a] border border-gray-800">
+                    <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider block font-sans">
+                      DEX Account Operational Role
+                    </span>
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setSignupRole('user')}
+                        className={`px-3 py-2 rounded-full text-[10.5px] font-bold text-center border cursor-pointer transition-all ${
+                          signupRole === 'user'
+                            ? 'bg-[#0ecb81]/15 text-[#0ecb81] border-[#0ecb81]'
+                            : 'bg-transparent text-gray-400 border-gray-800 hover:border-gray-700'
+                        }`}
+                      >
+                        Standard Trader
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSignupRole('junior_admin')}
+                        className={`px-3 py-2 rounded-full text-[10.5px] font-bold text-center border cursor-pointer transition-all ${
+                          signupRole === 'junior_admin'
+                            ? 'bg-[#eab308]/15 text-[#eab308] border-[#eab308]'
+                            : 'bg-transparent text-gray-400 border-gray-800 hover:border-gray-700'
+                        }`}
+                      >
+                        Junior Admin
+                      </button>
+                    </div>
+                    <p className="text-[9.5px] text-gray-500 font-mono italic mt-1 leading-relaxed">
+                      {signupRole === 'user' 
+                        ? 'Allows instant simulation trading with spot charts, portfolios and limit orders.'
+                        : 'Awaiting Senior Admin approval. Junior Admins can inspect logs and submit sandbox operations.'}
+                    </p>
                   </div>
 
                   {/* Terms disclaimer */}
