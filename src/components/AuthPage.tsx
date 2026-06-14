@@ -180,6 +180,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
     setTimeout(() => setMsgNotice(null), 4000);
   };
 
+  const handlePreFillAdmin = () => {
+    setEmailOrUser('senior_admin');
+    setPassword('admin');
+    setMsgNotice('Pre-filled Senior Administrator credentials!');
+    setTimeout(() => setMsgNotice(null), 4000);
+  };
+
   // Handle Log-ins
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -870,19 +877,32 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
                   </div>
 
                   {/* Premium quick prefill block */}
-                  <div className="p-3 rounded-xl border border-gray-800 bg-[#12161a]/80 flex flex-col sm:flex-row justify-between items-center gap-2 mt-1">
-                    <div className="flex gap-2 items-center">
-                      <Info size={13} className="text-blue-500 shrink-0" />
-                      <span className="text-[10px] text-gray-300 font-sans">Need instant access to charts and leverage?</span>
+                  <div className="p-3.5 rounded-xl border border-[#2b3139] bg-[#12161a] mt-1 flex flex-col gap-3">
+                    <div className="flex gap-2 items-start">
+                      <Info size={14} className="text-[#f0b90b] shrink-0 mt-0.5" />
+                      <div className="flex flex-col">
+                        <span className="text-[11px] text-gray-200 font-bold font-sans">Sandbox Demo Quick Access Keys</span>
+                        <span className="text-[10px] text-gray-400 font-sans mt-0.5">Click a shortcut button below to pre-fill accounts:</span>
+                      </div>
                     </div>
-                    <button
-                      id="prefill-cred-btn"
-                      type="button"
-                      onClick={handlePreFillDemo}
-                      className="text-[10px] px-3 py-1 font-sans rounded-full bg-blue-500 text-white font-bold hover:bg-blue-600 transition cursor-pointer"
-                    >
-                      Fill Demo Credentials
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        id="prefill-cred-btn"
+                        type="button"
+                        onClick={handlePreFillDemo}
+                        className="text-[10.5px] px-3 py-1.5 font-sans rounded-full bg-blue-600/15 text-blue-400 border border-blue-500/30 font-bold hover:bg-blue-600/25 transition cursor-pointer text-center"
+                      >
+                        💼 Trader Demo Account
+                      </button>
+                      <button
+                        id="prefill-admin-btn"
+                        type="button"
+                        onClick={handlePreFillAdmin}
+                        className="text-[10.5px] px-3 py-1.5 font-sans rounded-full bg-yellow-500/15 text-yellow-500 border border-yellow-500/30 font-bold hover:bg-yellow-500/25 transition cursor-pointer text-center"
+                      >
+                        🛡️ Senior Admin Account
+                      </button>
+                    </div>
                   </div>
                 </form>
 

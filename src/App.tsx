@@ -16,7 +16,7 @@ import { AuthPage } from './components/AuthPage';
 import { AdminPortal } from './components/AdminPortal';
 
 // Icons
-import { Sparkles, Star, TrendingUp, TrendingDown, BookOpen, AlertCircle, RefreshCw, Bell, Sliders, Gift, Users, ArrowRight, ShieldAlert } from 'lucide-react';
+import { Sparkles, Star, TrendingUp, TrendingDown, BookOpen, AlertCircle, RefreshCw, Bell, Sliders, Gift, Users, ArrowRight, ShieldAlert, User } from 'lucide-react';
 
 export default function App() {
   // User Authentication profile state
@@ -1149,23 +1149,33 @@ export default function App() {
         {/* Global summary stats info */}
         <div className="flex items-center gap-5">
           {currentUser && (
-            <div className="flex items-center gap-2 px-2.5 py-1 bg-gray-800/80 rounded-lg border border-gray-700 font-mono text-[10.5px]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#0ecb81] animate-pulse" />
-              <span className="text-gray-300 font-bold max-w-[80px] sm:max-w-[120px] truncate" title={currentUser.email}>
+            <div 
+              id="user-account-auth-indicator" 
+              className="flex items-center gap-2 px-3 py-1.5 bg-[#1b2026] rounded-lg border-2 border-[#f0b90b] shadow-[0_0_15px_rgba(240,185,11,0.25)] font-mono text-[11px] animate-pulse transition-all hover:scale-105 duration-300 group"
+              title={`Logged in as: ${currentUser.name} (${currentUser.email})`}
+            >
+              <div className="flex items-center gap-1.5 text-[#f0b90b] font-bold">
+                <User size={13} className="stroke-[2.5]" />
+                <span className="text-[10px] uppercase tracking-wider hidden xs:inline">Account:</span>
+              </div>
+              <span className="text-white font-extrabold max-w-[80px] sm:max-w-[120px] truncate">
                 {currentUser.name}
               </span>
-              <button
-                id="header-logout-btn"
-                onClick={() => {
-                  setCurrentUser(null);
-                  setActivePanel('user');
-                  localStorage.removeItem('binance_current_user');
-                  triggerToast('Logged out of Paper Core session.');
-                }}
-                className="text-red-400 hover:text-red-300 ml-1.5 hover:underline cursor-pointer font-sans text-[10px]"
-              >
-                Logout
-              </button>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#0ecb81] animate-ping" />
+              <div className="border-l border-gray-700 pl-2 ml-1">
+                <button
+                  id="header-logout-btn"
+                  onClick={() => {
+                    setCurrentUser(null);
+                    setActivePanel('user');
+                    localStorage.removeItem('binance_current_user');
+                    triggerToast('Logged out of Paper Core session.');
+                  }}
+                  className="text-red-400 hover:text-red-300 hover:underline cursor-pointer font-sans font-bold text-[10px] uppercase tracking-wide"
+                >
+                  Logout
+                </button>
+              </div>
             </div>
           )}
 
