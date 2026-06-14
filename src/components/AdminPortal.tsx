@@ -22,11 +22,12 @@ import {
 
 interface AdminPortalProps {
   currentUser: { name: string; username: string; email: string; role: string };
-  onClose: () => void;
+  onClose?: () => void;
   onRefreshDEXBalance?: () => void;
+  isFullPage?: boolean;
 }
 
-export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: AdminPortalProps) {
+export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullPage = false }: AdminPortalProps) {
   const isSenior = currentUser.role === 'senior_admin';
   const roleName = isSenior ? 'Senior Administrator' : 'Junior Administrator';
 
@@ -602,8 +603,14 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
   const pendingInvestments = investmentReqs.filter(inv => inv.status === 'pending');
 
   return (
-    <div id="admin-overall-portal-curtain" className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div id="admin-panel-main-modal" className="w-full max-w-6xl bg-[#0b0e11] border border-[#2b3139] rounded-xl shadow-2xl flex flex-col h-[90vh] md:h-[85vh] overflow-hidden text-gray-200">
+    <div 
+      id="admin-overall-portal-curtain" 
+      className={isFullPage ? "w-full h-full bg-[#0b0e11] flex flex-col text-gray-200 overflow-hidden" : "fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"}
+    >
+      <div 
+        id="admin-panel-main-modal" 
+        className={isFullPage ? "w-full h-full flex flex-col overflow-hidden bg-[#0b0e11] text-gray-200" : "w-full max-w-6xl bg-[#0b0e11] border border-[#2b3139] rounded-xl shadow-2xl flex flex-col h-[90vh] md:h-[85vh] overflow-hidden text-gray-200"}
+      >
         
         {/* TOP STATUS BAR */}
         <div className="bg-[#12161a] border-b border-[#2b3139] px-5 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -630,7 +637,7 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance }: Admin
 
           <div className="flex items-center gap-2.5 w-full sm:w-auto">
             <button
-              onClick={onClose}
+              onClick={() => onClose && onClose()}
               className="bg-[#2b3139] hover:bg-gray-700 text-white font-black px-4 py-1.5 rounded text-[10.5px] uppercase tracking-wider cursor-pointer transition-colors"
             >
               Exit to DEX Live Node

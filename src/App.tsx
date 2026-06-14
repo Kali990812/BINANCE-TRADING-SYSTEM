@@ -28,6 +28,9 @@ export default function App() {
   // Track the active admin portal modal status
   const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
 
+  // Separated panels state for Administrator accounts: 'user' (DEX Desktop) vs 'admin' (Admin Console)
+  const [activePanel, setActivePanel] = useState<'user' | 'admin'>('user');
+
   // Sync back wallet modifications on administrative actions
   const refreshWalletFromStore = () => {
     const saved = localStorage.getItem('binance_mock_wallet');
@@ -1060,23 +1063,44 @@ export default function App() {
 
       {/* Administrative System operator fast desk strip */}
       {currentUser && (currentUser.role === 'senior_admin' || currentUser.role === 'junior_admin') && (
-        <div id="admin-operator-fast-access-strip" className="bg-gradient-to-r from-[#5f131a]/85 via-[#12161a] to-[#5f131a]/85 border-b border-red-500/30 px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shrink-0 shadow-lg select-none">
+        <div id="admin-operator-fast-access-strip" className="bg-gradient-to-r from-[#1c242c] via-[#12161a] to-[#1c242c] border-b border-yellow-500/30 px-4 py-2 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shrink-0 shadow-lg select-none">
           <div className="flex items-center gap-2.5">
-            <span className="bg-red-500/15 text-red-400 text-[10px] font-black px-2.5 py-0.5 rounded border border-red-500/25 animate-pulse flex items-center gap-1.5 font-mono uppercase tracking-widest leading-none">
-              <ShieldAlert size={12} className="stroke-[2.5]" /> Secure Operator Console
+            <span className="bg-yellow-500/15 text-yellow-500 text-[10px] font-black px-2.5 py-1 rounded border border-yellow-500/25 animate-pulse flex items-center gap-1.5 font-mono uppercase tracking-widest leading-none">
+              <ShieldAlert size={12} className="stroke-[2.5]" /> Secure Workspace Manager
             </span>
             <p className="text-gray-300 font-medium text-center sm:text-left leading-normal font-sans text-[11px]">
-              Active Session: <strong className="text-white">@{currentUser.username}</strong> ({currentUser.role === 'senior_admin' ? 'Senior Administrator' : 'Junior Monitor Read-Only'}). Review pending user registrations, deposits, investment proposals, and secure payouts.
+              Logged in: <strong className="text-white">@{currentUser.username}</strong> ({currentUser.role === 'senior_admin' ? 'Senior Authority' : 'Junior Sandbox Only'}). Toggle separate panels below.
             </p>
           </div>
 
-          <button
-            onClick={() => setIsAdminPortalOpen(true)}
-            className="bg-[#f0b90b] hover:bg-yellow-500 text-black px-4 py-1.5 rounded text-[10px] font-black cursor-pointer transition-all flex items-center gap-1.5 border border-transparent shadow-[0_1px_6px_rgba(240,185,11,0.25)] shrink-0 font-sans uppercase tracking-wider animate-bounce"
-          >
-            <Sliders size={12} className="stroke-[2.5]" />
-            Launch Administrator Portal
-          </button>
+          <div className="flex bg-[#12161a] border border-[#2b3139] p-0.5 rounded-lg gap-1 shrink-0 overflow-hidden shadow-inner font-sans">
+            <button
+              onClick={() => {
+                setActivePanel('user');
+                triggerToast('Interactive trading view panel active.');
+              }}
+              className={`px-3 py-1.5 rounded-md text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                activePanel === 'user'
+                  ? 'bg-gradient-to-tr from-[#f0b90b] to-yellow-400 text-black shadow-md'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-850'
+              }`}
+            >
+              💼 User Panel (DEX Desk)
+            </button>
+            <button
+              onClick={() => {
+                setActivePanel('admin');
+                triggerToast('Direct configuration dashboard active.');
+              }}
+              className={`px-3 py-1.5 rounded-md text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                activePanel === 'admin'
+                  ? 'bg-gradient-to-tr from-[#f0b90b] to-yellow-400 text-black shadow-md'
+                  : 'text-gray-400 hover:text-white hover:bg-[#1f262f]'
+              }`}
+            >
+              🛡️ Admin Panel (Ledger Control)
+            </button>
+          </div>
         </div>
       )}
 
@@ -1134,6 +1158,7 @@ export default function App() {
                 id="header-logout-btn"
                 onClick={() => {
                   setCurrentUser(null);
+                  setActivePanel('user');
                   localStorage.removeItem('binance_current_user');
                   triggerToast('Logged out of Paper Core session.');
                 }}
@@ -1182,104 +1207,121 @@ export default function App() {
         </div>
       </header>
 
-      {/* Ticker tape summary panel */}
-      <TickerTape
-        coins={coins}
-        selectedSymbol={selectedSymbol}
-        onSelectCoin={handleSelectCoin}
-        mockUsdtBalance={wallet.find((w) => w.symbol === 'USDT')?.free || 0}
-      />
+      {/* Render selected workspace panel separately */}
+      {activePanel === 'admin' && currentUser && (currentUser.role === 'senior_admin' || currentUser.role === 'junior_admin') ? (
+        <div className="flex-1 w-full bg-[#0b0e11] flex flex-col h-full overflow-hidden">
+          <AdminPortal
+            currentUser={currentUser as any}
+            onClose={() => {
+              setActivePanel('user');
+              triggerToast('Returned to DEX Trading Desk.');
+            }}
+            onRefreshDEXBalance={refreshWalletFromStore}
+            isFullPage={true}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Ticker tape summary panel */}
+          <TickerTape
+            coins={coins}
+            selectedSymbol={selectedSymbol}
+            onSelectCoin={handleSelectCoin}
+            mockUsdtBalance={wallet.find((w) => w.symbol === 'USDT')?.free || 0}
+          />
 
-      {/* Dashboard Core Body workspace */}
-      <main id="workspace-primary-row" className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 p-3 bg-[#0b0e11] items-stretch">
-        
-        {/* LEFT COLUMN: Markets explorer + trades history feed */}
-        <section id="column-west" className="lg:col-span-3 flex flex-col gap-3 h-full">
-          {/* Market selector listings */}
-          <div className="flex-1 min-h-[320px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
-            <MarketList
-              coins={coins}
-              selectedSymbol={selectedSymbol}
-              onSelectCoin={handleSelectCoin}
-              favorites={favorites}
-              onToggleFavorite={handleToggleFavorite}
-            />
-          </div>
-
-          {/* Scrolling trade logs history */}
-          <div className="flex-1 min-h-[320px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
-            <TradesHistory trades={trades} coin={activeCoin} />
-          </div>
-        </section>
-
-        {/* CENTER COLUMN: Interactive Candlestick Charts + Portfolio distribution panel */}
-        <section id="column-center" className="lg:col-span-6 flex flex-col gap-3 h-full">
-          {/* Main Ticking Market chart */}
-          <div className="flex-[3] min-h-[360px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
-            <TradingChart candles={candles} coin={activeCoin} />
-          </div>
-
-          {/* Active Pending limits & Allocations */}
-          <div className="flex-[2] min-h-[260px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
-            <PortfolioCenter
-              orders={orders}
-              wallet={wallet}
-              coins={coins}
-              onCancelOrder={handleCancelOrder}
-              onRunFaucet={handleRunFaucet}
-              alerts={alerts}
-              onCreateAlert={handleCreateAlert}
-              onDeleteAlert={handleDeleteAlert}
-              activeSymbol={selectedSymbol}
-              currentUser={currentUser}
-              onUpdateUsdtBalance={handleUpdateUsdtBalance}
-              selectedTab={selectedPortfolioTab}
-              onTabChange={setSelectedPortfolioTab}
-              onImportWallet={handleImportWallet}
-              performanceData={performanceData}
-              performanceCountdown={performanceCountdown}
-            />
-          </div>
-        </section>
-
-        {/* RIGHT COLUMN: Order Depth list + Cockpit Form + Gemini chat bot */}
-        <section id="column-east" className="lg:col-span-3 flex flex-col gap-3 h-full">
-          {/* Depth lists & Order placement form cards */}
-          <div className="flex-1 grid grid-rows-2 sm:grid-rows-1 sm:grid-cols-2 lg:grid-cols-1 lg:grid-rows-2 gap-3 min-h-[380px]">
-            {/* Depth lists */}
-            <div className="rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
-              <OrderBook
-                orderBook={orderBook}
-                coin={activeCoin}
-                onSelectPrice={(pr) => setSelectedBookPrice(pr)}
-              />
-            </div>
+          {/* Dashboard Core Body workspace */}
+          <main id="workspace-primary-row" className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 p-3 bg-[#0b0e11] items-stretch">
             
-            {/* Trade spot forms */}
-            <div className="rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
-              <OrderForm
-                coin={activeCoin}
-                wallet={wallet}
-                onPlaceOrder={handlePlaceOrder}
-                overridePrice={selectedBookPrice}
-              />
-            </div>
-          </div>
+            {/* LEFT COLUMN: Markets explorer + trades history feed */}
+            <section id="column-west" className="lg:col-span-3 flex flex-col gap-3 h-full">
+              {/* Market selector listings */}
+              <div className="flex-1 min-h-[320px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
+                <MarketList
+                  coins={coins}
+                  selectedSymbol={selectedSymbol}
+                  onSelectCoin={handleSelectCoin}
+                  favorites={favorites}
+                  onToggleFavorite={handleToggleFavorite}
+                />
+              </div>
 
-          {/* Gemini chatbot counsel */}
-          <div className="flex-1 min-h-[380px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
-            <AiAdvisor
-              wallet={wallet}
-              selectedCoin={activeCoin}
-              candles={candles}
-              chatHistory={chatHistory}
-              onSendMessage={handleChatPromptSubmit}
-              onClearChat={handleClearChat}
-              isAiLoading={isAiLoading}
-            />
-          </div>
-        </section>
-      </main>
+              {/* Scrolling trade logs history */}
+              <div className="flex-1 min-h-[320px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
+                <TradesHistory trades={trades} coin={activeCoin} />
+              </div>
+            </section>
+
+            {/* CENTER COLUMN: Interactive Candlestick Charts + Portfolio distribution panel */}
+            <section id="column-center" className="lg:col-span-6 flex flex-col gap-3 h-full">
+              {/* Main Ticking Market chart */}
+              <div className="flex-[3] min-h-[360px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
+                <TradingChart candles={candles} coin={activeCoin} />
+              </div>
+
+              {/* Active Pending limits & Allocations */}
+              <div className="flex-[2] min-h-[260px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
+                <PortfolioCenter
+                  orders={orders}
+                  wallet={wallet}
+                  coins={coins}
+                  onCancelOrder={handleCancelOrder}
+                  onRunFaucet={handleRunFaucet}
+                  alerts={alerts}
+                  onCreateAlert={handleCreateAlert}
+                  onDeleteAlert={handleDeleteAlert}
+                  activeSymbol={selectedSymbol}
+                  currentUser={currentUser}
+                  onUpdateUsdtBalance={handleUpdateUsdtBalance}
+                  selectedTab={selectedPortfolioTab}
+                  onTabChange={setSelectedPortfolioTab}
+                  onImportWallet={handleImportWallet}
+                  performanceData={performanceData}
+                  performanceCountdown={performanceCountdown}
+                />
+              </div>
+            </section>
+
+            {/* RIGHT COLUMN: Order Depth list + Cockpit Form + Gemini chat bot */}
+            <section id="column-east" className="lg:col-span-3 flex flex-col gap-3 h-full">
+              {/* Depth lists & Order placement form cards */}
+              <div className="flex-1 grid grid-rows-2 sm:grid-rows-1 sm:grid-cols-2 lg:grid-cols-1 lg:grid-rows-2 gap-3 min-h-[380px]">
+                {/* Depth lists */}
+                <div className="rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
+                  <OrderBook
+                    orderBook={orderBook}
+                    coin={activeCoin}
+                    onSelectPrice={(pr) => setSelectedBookPrice(pr)}
+                  />
+                </div>
+                
+                {/* Trade spot forms */}
+                <div className="rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
+                  <OrderForm
+                    coin={activeCoin}
+                    wallet={wallet}
+                    onPlaceOrder={handlePlaceOrder}
+                    overridePrice={selectedBookPrice}
+                  />
+                </div>
+              </div>
+
+              {/* Gemini chatbot counsel */}
+              <div className="flex-1 min-h-[380px] rounded bg-[#161a1e] border border-[#2b3139] overflow-hidden flex flex-col">
+                <AiAdvisor
+                  wallet={wallet}
+                  selectedCoin={activeCoin}
+                  candles={candles}
+                  chatHistory={chatHistory}
+                  onSendMessage={handleChatPromptSubmit}
+                  onClearChat={handleClearChat}
+                  isAiLoading={isAiLoading}
+                />
+              </div>
+            </section>
+          </main>
+        </>
+      )}
 
       {/* Dynamic Headlines flashing feed */}
       <footer id="dashboard-flashing-meta" className="bg-[#12161a] border-t border-[#2b3139] p-3 text-xs text-gray-500 shrink-0 select-none">
@@ -1360,13 +1402,7 @@ export default function App() {
         }}
       />
 
-      {isAdminPortalOpen && currentUser && (currentUser.role === 'senior_admin' || currentUser.role === 'junior_admin') && (
-        <AdminPortal 
-          currentUser={currentUser as any} 
-          onClose={() => setIsAdminPortalOpen(false)}
-          onRefreshDEXBalance={refreshWalletFromStore}
-        />
-      )}
+
     </div>
   );
 }
