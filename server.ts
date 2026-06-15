@@ -122,12 +122,12 @@ ${auditText}
   }
   // 4. FAUCET
   else if (msgLower.includes('faucet') || msgLower.includes('usdt')) {
-    responseText = `💸 **USDT Faucet Injection Guide**
+    responseText = `💸 **USDT Wallet Funding Guide**
 
-If your simulation balance is running low, or you want to experiment with high whale-like positions:
-1. Click the **"USDT Faucet (+$10,000)"** button at the top-right of your main trading center.
-2. The engine instantly injects **$10,000.00 USDT** into your free wallet reserves.
-3. You will receive a green toast confirmation, and your allocations stack chart will refresh in real-time!`;
+If your simulation balance is running low or you want to fund your account:
+1. Navigate to the **Finance** tab in your main hub.
+2. Enter the USDT amount you wish to deposit and type your transaction code (e.g. from M-Pesa).
+3. Click "Submit Deposit Filing Details". The Senior Administrator will review and approve your credit request instantly!`;
   }
   // DEFAULT RESPONSE
   else {
