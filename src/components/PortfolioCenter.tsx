@@ -609,7 +609,7 @@ export const PortfolioCenter: React.FC<PortfolioCenterProps> = ({
   }, [activeInvestments.length]);
 
   const handleCopyReferralUrl = () => {
-    const referralUrl = `https://binance-papercore.com/join?ref=${currentUser?.username || 'member'}`;
+    const referralUrl = `https://binancetradingsystem.bit006223.workers.dev/?ref=${currentUser?.username || 'member'}`;
     navigator.clipboard.writeText(referralUrl).then(() => {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);

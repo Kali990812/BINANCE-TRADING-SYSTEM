@@ -43,6 +43,57 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
   // Remember me
   const [rememberMe, setRememberMe] = useState(true);
 
+  // Affiliate Referrer Code Tracker
+  const [referrerCode, setReferrerCode] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const inviter = localStorage.getItem('binance_referral_inviter');
+      if (inviter) {
+        setReferrerCode(inviter);
+        console.log(`🎁 User detected referrer profile code: ${inviter}`);
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+  }, []);
+
+  const recordGlobalReferral = (refereeName: string, refereeEmail: string, refereeUsername: string) => {
+    try {
+      const inviter = localStorage.getItem('binance_referral_inviter') || referrerCode;
+      if (!inviter) return;
+
+      const globalRaw = localStorage.getItem('binance_global_referrals') || '{}';
+      const parsedMap = JSON.parse(globalRaw);
+      
+      if (!parsedMap[inviter]) {
+        parsedMap[inviter] = [];
+      }
+
+      const currentList: any[] = parsedMap[inviter];
+      const exists = currentList.some((r: any) => r.email === refereeEmail || r.name.toLowerCase() === refereeName.toLowerCase());
+      
+      if (!exists) {
+        currentList.push({
+          id: `ref-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+          name: refereeName,
+          email: refereeEmail,
+          joinedAt: new Date().toLocaleDateString(),
+          investmentAmount: 1000, // Seed initial investment amount for mock ledger calculation
+          commissionEarned: 100, // default 10% instant commission
+          status: 'pending'
+        });
+        parsedMap[inviter] = currentList;
+        localStorage.setItem('binance_global_referrals', JSON.stringify(parsedMap));
+        console.log(`🎉 Global referral recorded under inviter: ${inviter}`);
+        
+        // Clear parameter from localStorage so they don't count duplicate times
+        localStorage.removeItem('binance_referral_inviter');
+      }
+    } catch (err) {
+      console.warn("Could not record global referral:", err);
+    }
+  };
+
   // Toggles and feedback
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -424,6 +475,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
             else regUsers.push(savedU);
             localStorage.setItem('binance_registered_users', JSON.stringify(regUsers));
 
+            // Record global affiliate collection
+            recordGlobalReferral(tempUser.name, tempUser.email, usernameLower);
+
             onLoginSuccess({
               name: tempUser.name,
               username: usernameLower,
@@ -464,6 +518,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
             });
             localStorage.setItem('binance_site_activities', JSON.stringify(siteLogs));
+
+            // Record global affiliate collection
+            recordGlobalReferral(tempUser.name, tempUser.email, usernameLower);
 
             onLoginSuccess({
               name: tempUser.name,
@@ -940,6 +997,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
                     Complete fields below to initialize cash pool, wallet trackers, and indicators.
                   </p>
                 </div>
+
+                {referrerCode && (
+                  <div className="bg-[#f0b90b]/10 text-[#f0b90b] border border-[#f0b90b]/20 rounded-xl p-3 text-[11px] font-sans flex items-center gap-2.5">
+                    <span className="text-lg animate-pulse">🎁</span>
+                    <div className="flex-1">
+                      You join the site using affiliate referral link from <strong className="underline text-white font-black">{referrerCode}</strong>!
+                      <span className="block text-[10px] text-gray-400 mt-0.5">A 5.0% instant staker commission is secured for your referrer.</span>
+                    </div>
+                  </div>
+                )}
 
                 <form onSubmit={handleSignupSubmit} className="flex flex-col gap-3">
                   {/* Full Name Input */}

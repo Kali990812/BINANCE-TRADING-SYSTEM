@@ -34,6 +34,25 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
+  // Extract referral parameters on page load
+  useEffect(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      let ref = searchParams.get('ref') || searchParams.get('code');
+      if (!ref) {
+        // Fallback for hash query params
+        const hashParams = new URLSearchParams(window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+        ref = hashParams.get('ref') || hashParams.get('code');
+      }
+      if (ref) {
+        localStorage.setItem('binance_referral_inviter', ref);
+        console.log(`🔗 Affiliate tracker: Loaded with referral code [${ref}]`);
+      }
+    } catch (e) {
+      console.warn("Failed tracking dynamic referral parameter on launch:", e);
+    }
+  }, []);
+
   const [userSelectedScreenshot, setUserSelectedScreenshot] = useState<string | null>(null);
 
   // Track the active admin portal modal status
@@ -1758,14 +1777,14 @@ export default function App() {
                     </p>
                     
                     <div className="bg-[#1e2329] border border-[#2b3139] rounded p-2.5 flex items-center justify-between gap-2 mt-1">
-                      <span className="text-[10px] font-mono text-gray-300 overflow-hidden text-ellipsis whitespace-nowrap select-all">
-                        https://aistudio.build/ref?code={currentUser.username}
+                      <span className="text-[10px] font-mono text-gray-300 overflow-hidden text-ellipsis whitespace-nowrap select-all font-bold">
+                        https://binancetradingsystem.bit006223.workers.dev/?ref={currentUser.username}
                       </span>
                       <button
                         onClick={() => {
-                          navigator.clipboard.writeText(`https://aistudio.build/ref?code=${currentUser.username}`);
+                          navigator.clipboard.writeText(`https://binancetradingsystem.bit006223.workers.dev/?ref=${currentUser.username}`);
                           triggerToast("Referral link copied!");
-                          alert("Referral link copied to clipboard!\nShare this link to claim a 5% instant commission payout as soon as referees invest.");
+                          alert("Referral link copied to clipboard!\nShare this link to claim a 5.0% instant commission payout as soon as referees invest.");
                         }}
                         className="bg-[#f0b90b] hover:bg-[#dfaa0a] text-black text-[10px] font-bold px-3 py-1 rounded shrink-0 flex items-center gap-1 transition-all cursor-pointer border-none"
                       >

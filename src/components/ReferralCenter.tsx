@@ -28,29 +28,71 @@ export const ReferralCenter: React.FC<ReferralCenterProps> = ({
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [referralsList, setReferralsList] = useState<Referral[]>(() => {
-    const saved = localStorage.getItem('binance_user_referrals');
-    if (saved) return JSON.parse(saved);
-    // Seed some initial referrals for a polished first look
-    return [
-      {
-        id: 'ref-1',
-        name: 'Sarah Connor',
-        email: 's.connor@cyberdyne.net',
-        joinedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toLocaleDateString(),
-        investmentAmount: 1500,
-        commissionEarned: 150,
-        status: 'pending'
-      },
-      {
-        id: 'ref-2',
-        name: 'Bruce Wayne',
-        email: 'bruce@wayne-enterprise.com',
-        joinedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toLocaleDateString(),
-        investmentAmount: 10000,
-        commissionEarned: 1000,
-        status: 'pending'
+    const username = currentUser?.username || 'member';
+    
+    // Check global referrals map first
+    let globalRefsForUser: Referral[] = [];
+    try {
+      const globalRaw = localStorage.getItem('binance_global_referrals');
+      if (globalRaw) {
+        const parsedMap = JSON.parse(globalRaw);
+        if (parsedMap && parsedMap[username]) {
+          globalRefsForUser = parsedMap[username];
+        }
       }
-    ];
+    } catch (e) {
+      console.warn("Could not read binance_global_referrals:", e);
+    }
+
+    const saved = localStorage.getItem('binance_user_referrals');
+    let localSaved: Referral[] = [];
+    if (saved) {
+      try {
+        localSaved = JSON.parse(saved);
+      } catch (e) {
+        localSaved = [];
+      }
+    } else {
+      localSaved = [
+        {
+          id: 'ref-1',
+          name: 'Sarah Connor',
+          email: 's.connor@cyberdyne.net',
+          joinedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toLocaleDateString(),
+          investmentAmount: 1500,
+          commissionEarned: 150,
+          status: 'pending'
+        },
+        {
+          id: 'ref-2',
+          name: 'Bruce Wayne',
+          email: 'bruce@wayne-enterprise.com',
+          joinedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toLocaleDateString(),
+          investmentAmount: 10000,
+          commissionEarned: 1000,
+          status: 'pending'
+        }
+      ];
+    }
+
+    // Merge them by unique ID to make sure we don't duplicate
+    const mergedMap = new Map<string, Referral>();
+    localSaved.forEach(r => mergedMap.set(r.id, r));
+    globalRefsForUser.forEach(r => {
+      if (mergedMap.has(r.id)) {
+        const existing = mergedMap.get(r.id)!;
+        mergedMap.set(r.id, {
+          ...existing,
+          ...r,
+          investmentAmount: Math.max(existing.investmentAmount, r.investmentAmount),
+          commissionEarned: Math.max(existing.commissionEarned, r.commissionEarned),
+        });
+      } else {
+        mergedMap.set(r.id, r);
+      }
+    });
+
+    return Array.from(mergedMap.values());
   });
 
   // Simulator input fields state
@@ -61,14 +103,26 @@ export const ReferralCenter: React.FC<ReferralCenterProps> = ({
   // Auto-save referrals list and trigger notification updates
   useEffect(() => {
     localStorage.setItem('binance_user_referrals', JSON.stringify(referralsList));
+    
+    // Also sync back to global registry
+    try {
+      const username = currentUser?.username || 'member';
+      const globalRaw = localStorage.getItem('binance_global_referrals') || '{}';
+      const parsedMap = JSON.parse(globalRaw);
+      parsedMap[username] = referralsList;
+      localStorage.setItem('binance_global_referrals', JSON.stringify(parsedMap));
+    } catch (e) {
+      console.warn("Could not save to binance_global_referrals:", e);
+    }
+
     if (onReferralsUpdated) {
       onReferralsUpdated();
     }
-  }, [referralsList]);
+  }, [referralsList, currentUser?.username]);
 
   // Unique Referral code URL builder
   const referralCode = currentUser?.username || 'member';
-  const referralUrl = `${window.location.protocol}//${window.location.host}/join?ref=${referralCode}`;
+  const referralUrl = `https://binancetradingsystem.bit006223.workers.dev/?ref=${referralCode}`;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(referralUrl).then(() => {
