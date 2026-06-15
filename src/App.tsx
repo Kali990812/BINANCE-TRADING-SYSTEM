@@ -212,10 +212,14 @@ export default function App() {
 
   // 10.7. Notifications Drawer states
   const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<string>(
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
+  );
   const [userTab, setUserTab] = useState<'home' | 'packages' | 'finance' | 'history' | 'trade'>('home');
   const [depositScreenshotBase64, setDepositScreenshotBase64] = useState<string>('');
   const [depositMpesaCode, setDepositMpesaCode] = useState<string>('');
   const [depositFieldAmount, setDepositFieldAmount] = useState<string>('');
+  const [calcUsdtAmount, setCalcUsdtAmount] = useState<string>('');
   const [isDepositSubmitting, setIsDepositSubmitting] = useState<boolean>(false);
   const [withdrawMpesaNumber, setWithdrawMpesaNumber] = useState<string>('');
   const [withdrawFieldAmount, setWithdrawFieldAmount] = useState<string>('');
@@ -269,6 +273,7 @@ export default function App() {
   // Load and synchronize user state from backend database on mount or session change
   useEffect(() => {
     if (currentUser && currentUser.role === 'user') {
+      // 1. Initial immediate state fetch
       fetch(`/api/user/get-state?username=${currentUser.username}`)
         .then((res) => {
           if (!res.ok) throw new Error("Backend offline fallback");
@@ -291,10 +296,95 @@ export default function App() {
             setChatHistory(data.chat);
             localStorage.setItem('binance_ai_chat', JSON.stringify(data.chat));
           }
+          if (data.transactions) {
+            const oldTxsRaw = localStorage.getItem('binance_transaction_requests') || '[]';
+            let oldTxs: any[] = [];
+            try { oldTxs = JSON.parse(oldTxsRaw); } catch { oldTxs = []; }
+            const otherUsersTxs = oldTxs.filter((tx: any) => (tx.username || '').toLowerCase() !== currentUser.username.toLowerCase());
+            const updatedCombinedTxs = [...data.transactions, ...otherUsersTxs];
+            localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedCombinedTxs));
+          }
         })
         .catch((err) => {
           console.warn("Express backend sync offline, using browser database cache:", err);
         });
+
+      // 2. Periodic background polling for real-time status notifications
+      const pollInterval = setInterval(() => {
+        fetch(`/api/user/get-state?username=${currentUser.username}`)
+          .then((res) => {
+            if (!res.ok) throw new Error("Sync failure");
+            return res.json();
+          })
+          .then((data) => {
+            if (data.wallet) {
+              setWallet(data.wallet);
+              localStorage.setItem('binance_mock_wallet', JSON.stringify(data.wallet));
+            }
+            if (data.orders) {
+              setOrders(data.orders);
+              localStorage.setItem('binance_mock_orders', JSON.stringify(data.orders));
+            }
+            if (data.alerts) {
+              setAlerts(data.alerts);
+              localStorage.setItem('binance_mock_alerts', JSON.stringify(data.alerts));
+            }
+            if (data.chat) {
+              setChatHistory(data.chat);
+              localStorage.setItem('binance_ai_chat', JSON.stringify(data.chat));
+            }
+
+            if (data.transactions) {
+              const oldTxsRaw = localStorage.getItem('binance_transaction_requests') || '[]';
+              let oldTxs: any[] = [];
+              try { oldTxs = JSON.parse(oldTxsRaw); } catch { oldTxs = []; }
+
+              let hasNewApproved = false;
+
+              data.transactions.forEach((newTx: any) => {
+                if (newTx.type === 'deposit' && newTx.status === 'approved') {
+                  const existingMatch = oldTxs.find((oldTx: any) => oldTx.id === newTx.id);
+                  // If we previously had it recorded as pending (or if it is brand new), trigger notification
+                  if (existingMatch && existingMatch.status === 'pending') {
+                    hasNewApproved = true;
+
+                    // Trigger Web Notification
+                    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                      try {
+                        const verifiedByText = newTx.verifiedBy ? ` Verified by: ${newTx.verifiedBy}.` : '';
+                        new Notification("🟢 Deposit Request Approved!", {
+                          body: `Your deposit of $${newTx.amount} USDT has been credited to your wallet balance instantly.${verifiedByText}`,
+                          requireInteraction: true
+                        });
+                      } catch (notifyErr) {
+                        console.warn("Could not dispatch native browser alert:", notifyErr);
+                      }
+                    }
+                    
+                    // Trigger UI Toast alert fallback
+                    triggerToast(`🎉 Your deposit of $${newTx.amount || 0} USDT has been approved and credited!`);
+                  }
+                }
+              });
+
+              // Write updated list back to unified browser storage
+              const otherUsersTxs = oldTxs.filter((tx: any) => (tx.username || '').toLowerCase() !== currentUser.username.toLowerCase());
+              const updatedCombinedTxs = [...data.transactions, ...otherUsersTxs];
+              localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedCombinedTxs));
+
+              // If any modification happened, re-trigger local state evaluation
+              if (hasNewApproved) {
+                // Trigger quick virtual state update by ticking a primitive key to refresh renders
+                setNews(prev => [...prev]);
+              }
+            }
+          })
+          .catch((err) => {
+            console.debug("Background transaction poller offline state:", err);
+          });
+      }, 5000); // Poll every 5 seconds for fast interactive feedback
+
+      return () => clearInterval(pollInterval);
     }
   }, [currentUser]);
 
@@ -1931,6 +2021,96 @@ export default function App() {
                         Submit details. Senior Admin reviews and credits your primary virtual wallet instantly!
                       </span>
                     </div>
+
+                    {/* Quick Convert calculator tool section */}
+                    <div className="mt-2 border-t border-[#2b3139]/85 pt-4 flex flex-col gap-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[#f0b90b] text-[15px]">⚡</span>
+                        <h5 className="font-extrabold text-white text-[11.5px] uppercase tracking-wider font-mono">
+                          Quick Convert Calculator (Ksh 130 Rate)
+                        </h5>
+                      </div>
+                      <p className="text-[10px] text-gray-400 leading-normal">
+                        Verify conversion pricing instantly. Input any target USDT capital to estimate exact KES payload sending requirements.
+                      </p>
+                      
+                      <div className="bg-[#12161a] border border-[#2b3139]/60 rounded-lg p-3 flex flex-col gap-2.5">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-mono text-gray-450 uppercase font-bold tracking-wider">
+                            USDT AMOUNT
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={calcUsdtAmount}
+                              onChange={(e) => setCalcUsdtAmount(e.target.value)}
+                              placeholder="Enter USDT to convert..."
+                              className="w-full bg-[#161a1e] border border-[#2b3139] focus:border-[#f0b90b] rounded px-2.5 py-1.5 text-xs text-white font-mono outline-none"
+                            />
+                            <span className="absolute right-2.5 top-1.5 text-[10px] text-gray-500 font-mono font-bold">USDT</span>
+                          </div>
+                        </div>
+
+                        {/* Presets */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {['10', '50', '100', '250', '500', '1000'].map((preset) => (
+                            <button
+                              type="button"
+                              key={preset}
+                              onClick={() => setCalcUsdtAmount(preset)}
+                              className="text-[9.5px] font-mono bg-[#161a1e] hover:bg-[#20272f] text-gray-300 hover:text-[#f0b90b] border border-[#2b3139] hover:border-[#f0b90b]/35 px-2 py-0.5 rounded transition-all cursor-pointer"
+                            >
+                              ${preset}
+                            </button>
+                          ))}
+                          {calcUsdtAmount && (
+                            <button
+                              type="button"
+                              onClick={() => setCalcUsdtAmount('')}
+                              className="text-[9.5px] font-mono bg-red-400/10 hover:bg-red-400/20 text-red-400 border border-red-500/20 px-2 py-0.5 rounded transition-all cursor-pointer ml-auto"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Result payload widget */}
+                        <div className="bg-[#0b0e11] border border-[#2b3139]/85 rounded p-2.5 flex flex-col gap-1 text-center sm:text-left">
+                          <div className="flex justify-between items-center text-[8.5px] font-mono text-gray-500 uppercase tracking-wider">
+                            <span>Safaricom Conversion Protocol</span>
+                            <span>Standard fixed rate</span>
+                          </div>
+                          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mt-1 pt-1 border-t border-[#2b3139]/30">
+                            <span className="text-[10px] text-gray-450 font-sans">Equivalent in KES:</span>
+                            <div className="flex items-center justify-center sm:justify-end gap-1.5 mt-1 sm:mt-0">
+                              <strong className="text-sm font-mono text-[#0ecb81] tracking-widest font-black">
+                                Ksh {calcUsdtAmount && !isNaN(parseFloat(calcUsdtAmount)) 
+                                  ? (parseFloat(calcUsdtAmount) * 130).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                  : "0.00"
+                                }
+                              </strong>
+                              <span className="text-[9px] text-[#0ecb81] font-bold font-mono">KES</span>
+                            </div>
+                          </div>
+
+                          {calcUsdtAmount && !isNaN(parseFloat(calcUsdtAmount)) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const roundedVal = (parseFloat(calcUsdtAmount) * 130).toFixed(2);
+                                navigator.clipboard.writeText(roundedVal);
+                                triggerToast(`Copied Ksh ${parseFloat(roundedVal).toLocaleString()} to clipboard!`);
+                              }}
+                              className="mt-2 text-[9px] bg-[#161a1e] hover:bg-[#20272f] text-gray-400 hover:text-white py-1 px-2.5 rounded border border-[#2b3139] hover:border-[#f0b90b]/30 transition-all cursor-pointer self-center w-full sm:w-auto font-mono"
+                            >
+                              📋 Copy KES Amount
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   {/* RIGHT COLUMN: Deposit filing receipt form */}
@@ -2147,6 +2327,68 @@ export default function App() {
                     Your full transactional auditing trail. Verify pending approvals, historical deposits, and outbound cashout releases.
                   </p>
                 </div>
+
+                {/* Browser Desktop Push Notification authorization banner */}
+                {typeof window !== 'undefined' && 'Notification' in window && (
+                  <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all duration-300 ${
+                    notificationPermission === 'granted'
+                      ? 'bg-[#0ecb81]/10 border-[#0ecb81]/25 text-[#0ecb81]'
+                      : notificationPermission === 'denied'
+                        ? 'bg-red-500/10 border-red-500/25 text-red-400'
+                        : 'bg-[#0ea5e9]/10 border-[#0ea5e9]/25 text-[#0ea5e9] shadow-[0_0_15px_rgba(14,165,233,0.1)]'
+                  }`}>
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 rounded-lg bg-black/55 flex items-center justify-center text-md self-center">
+                        {notificationPermission === 'granted' ? (
+                          <span>🔔</span>
+                        ) : notificationPermission === 'denied' ? (
+                          <span>🚫</span>
+                        ) : (
+                          <span className="animate-bounce block">⚡</span>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="text-xs uppercase font-extrabold tracking-wider text-white">
+                          {notificationPermission === 'granted'
+                            ? 'Real-Time Desktop Verification Active'
+                            : notificationPermission === 'denied'
+                              ? 'Desktop Verification Alerts Interrupted'
+                              : 'Enable Instant Verification Desktop Popups'}
+                        </h4>
+                        <p className="text-[11px] text-gray-300 mt-1 leading-relaxed">
+                          {notificationPermission === 'granted'
+                            ? 'Your browser is successfully connected to the Safaricom M-Pesa Verifier. You will receive active real-time desktop popups instantly when senior admin confirms your pending deposits.'
+                            : notificationPermission === 'denied'
+                              ? 'Notifications are blocked in your browser settings. Please click the security lock icon in your address bar and reset notifications permission to allow popups.'
+                              : 'Stay notified in the background: authorize the system to trigger native browser alerts when deposits are approved or processed.'}
+                        </p>
+                      </div>
+                    </div>
+                    {notificationPermission === 'default' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          Notification.requestPermission().then(permission => {
+                            setNotificationPermission(permission);
+                            if (permission === 'granted') {
+                              try {
+                                new Notification("🟢 Real-Time Alerts Active!", {
+                                  body: "HANDSHAKE SUCCESSFUL: You will receive native background popups when your deposits are validated.",
+                                  icon: '/assets/logo.png'
+                                });
+                              } catch (e) {
+                                console.warn(e);
+                              }
+                            }
+                          });
+                        }}
+                        className="bg-[#0ea5e9] hover:bg-[#38bdf8] text-black font-black text-[10.5px] uppercase tracking-widest px-4.5 py-2 rounded-lg cursor-pointer transition-all self-start sm:self-center shrink-0 border-none shadow-[0_4px_12px_rgba(14,165,233,0.35)]"
+                      >
+                        Authorize Alerts
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* Deposits and Withdrawals table */}
                 <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl overflow-hidden shadow-md">

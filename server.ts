@@ -1117,7 +1117,7 @@ app.get('/api/user/get-state', async (req, res) => {
   if (!username) return res.status(400).json({ error: 'Username parameter is missing.' });
 
   try {
-    const users = await dbGetUsers();
+    const [users, allTransactions] = await Promise.all([dbGetUsers(), dbGetTransactions()]);
     const usernameLower = (username as string).toLowerCase().trim();
     const user = users.find((u: any) => u.username === usernameLower);
 
@@ -1125,12 +1125,15 @@ app.get('/api/user/get-state', async (req, res) => {
       return res.status(404).json({ error: 'User does not exist on active node.' });
     }
 
+    const userTransactions = allTransactions.filter((tx: any) => (tx.username || '').toLowerCase() === usernameLower);
+
     res.json({
       wallet: user.wallet || null,
       orders: user.orders || null,
       alerts: user.alerts || null,
       chat: user.chat || null,
-      balanceUsdt: user.balanceUsdt !== undefined ? user.balanceUsdt : 1.0
+      balanceUsdt: user.balanceUsdt !== undefined ? user.balanceUsdt : 1.0,
+      transactions: userTransactions
     });
   } catch (e) {
     res.status(500).json({ error: 'Get user state transaction failed.' });
