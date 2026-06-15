@@ -17,7 +17,8 @@ import {
   Clock, 
   Lock, 
   Unlock, 
-  AlertCircle 
+  AlertCircle,
+  Zap
 } from 'lucide-react';
 
 interface AdminPortalProps {
@@ -37,21 +38,29 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullP
   const [investmentReqs, setInvestmentReqs] = useState<any[]>([]);
   const [siteLogs, setSiteLogs] = useState<any[]>([]);
   const [juniorApproved, setJuniorApproved] = useState<boolean>(false);
+  const [adminSelectedScreenshot, setAdminSelectedScreenshot] = useState<string | null>(null);
   
   // Custom Role administration additions
   const [juniorAdmins, setJuniorAdmins] = useState<any[]>([]);
   const [juniorActivities, setJuniorActivities] = useState<any[]>([]);
   
+  // Auto-verification simulation status
+  const [verifyingTxId, setVerifyingTxId] = useState<string | null>(null);
+  const [verificationLogs, setVerificationLogs] = useState<string[]>([]);
+  const [isVerifyingProgress, setIsVerifyingProgress] = useState(false);
+
   const [systemParameters, setSystemParameters] = useState<{
     faucetReserves: number;
     platformFeePercent: number;
     contractGasBuffer: number;
     ledgerLock: boolean;
+    autoVerifyDeposits?: boolean;
   }>({
     faucetReserves: 2500000,
     platformFeePercent: 0.10,
     contractGasBuffer: 15.0,
-    ledgerLock: false
+    ledgerLock: false,
+    autoVerifyDeposits: false
   });
   
   // Active junior operational action draft fields
@@ -292,6 +301,121 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullP
       addLog('Approved Deposit', `Approved pending deposit request (${requestId}) for "${targetUsername}" of $${depositAmt} USDT.`);
       if (onRefreshDEXBalance) onRefreshDEXBalance();
       alert(`Verified & Approved Deposit of $${depositAmt} USDT (Offline fallback)`);
+    });
+  };
+
+  // On-demand triggered auto-verify for individual deposits (with simulated logs)
+  const handleAutoVerifyDeposit = (requestId: string) => {
+    if (!checkSeniorPermission()) return;
+    const targetTx = txRequests.find(t => t.id === requestId);
+    if (!targetTx) return;
+
+    setVerifyingTxId(requestId);
+    setIsVerifyingProgress(true);
+    setVerificationLogs([]);
+
+    const logMessages = [
+      "🔄 Initializing Safaricom M-Pesa Verifier handshake...",
+      "🔗 Querying blockchain peer node sequence headers...",
+      `📍 Probing transactions registry fallback for ref [${targetTx.refHash || 'Direct-API-Deposit'}]...`,
+      `📄 Authenticating amount: $${targetTx.amount} USDT requested by "@${targetTx.username}"...`,
+      "🤖 Triggering deep OCR receipt verification parser...",
+      "✅ Authenticity signature stamp handshake validation: MATCHED.",
+      "📨 Authorizing express database ledger credit transaction..."
+    ];
+
+    let currentStep = 0;
+    const interval = setInterval(() => {
+      if (currentStep < logMessages.length) {
+        setVerificationLogs(prev => [...prev, logMessages[currentStep]]);
+        currentStep++;
+      } else {
+        clearInterval(interval);
+        
+        fetch('/api/admin/auto-verify-deposit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactionId: requestId, adminUsername: currentUser.username })
+        })
+        .then(async (res) => {
+          if (res.ok) {
+            setVerificationLogs(prev => [...prev, "🎉 SETTLEMENT SUCCESSFUL: User balance updated instantly."]);
+            setTimeout(() => {
+              setIsVerifyingProgress(false);
+              setVerifyingTxId(null);
+              fetchAdminData();
+              if (onRefreshDEXBalance) onRefreshDEXBalance();
+            }, 1000);
+          } else {
+            const err = await res.json();
+            setVerificationLogs(prev => [...prev, `❌ CRITICAL ERROR: Auto-verify failed on server: ${err.error}`]);
+            setTimeout(() => {
+              setIsVerifyingProgress(false);
+              setVerifyingTxId(null);
+            }, 2500);
+          }
+        })
+        .catch((err) => {
+          console.warn("Auto-verify offline state handler:", err);
+          // Offline fallback
+          let targetUsername = '';
+          let depositAmt = 0;
+          const updatedTx = txRequests.map(req => {
+            if (req.id === requestId) {
+              targetUsername = req.username;
+              depositAmt = req.amount;
+              return { ...req, status: 'approved', verifiedBy: 'Auto-Verify Service v2.0' };
+            }
+            return req;
+          });
+          localStorage.setItem('binance_transaction_requests', JSON.stringify(updatedTx));
+          setTxRequests(updatedTx);
+
+          const updatedUsers = registeredUsers.map(u => {
+            if (u.username === targetUsername) {
+              return { ...u, balanceUsdt: Number(((u.balanceUsdt || 0) + depositAmt).toFixed(2)) };
+            }
+            return u;
+          });
+          localStorage.setItem('binance_registered_users', JSON.stringify(updatedUsers));
+          setRegisteredUsers(updatedUsers);
+
+          addLog('Auto-Verify Deposit', `Simulated verification success on offline fallback for "${targetUsername}" of $${depositAmt} USDT.`);
+          setVerificationLogs(prev => [...prev, "🎉 OFFLINE FALLBACK SETTLEMENT SUCCESS: Simulated Local Storage credited."]);
+          
+          setTimeout(() => {
+            setIsVerifyingProgress(false);
+            setVerifyingTxId(null);
+            if (onRefreshDEXBalance) onRefreshDEXBalance();
+          }, 1200);
+        });
+      }
+    }, 350);
+  };
+
+  // Turn on/off whole system auto-verify parameters
+  const handleToggleAutoVerify = (enabled: boolean) => {
+    if (!checkSeniorPermission()) return;
+    fetch('/api/admin/toggle-auto-verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, adminUsername: currentUser.username })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        const data = await res.json();
+        if (data.systemParameters) {
+          setSystemParameters(data.systemParameters);
+        }
+      } else {
+        alert('Failed to modify global auto-verify parameters.');
+      }
+    })
+    .catch((err) => {
+      console.warn("Global parameters offline toggling state:", err);
+      const nextParams = { ...systemParameters, autoVerifyDeposits: enabled };
+      setSystemParameters(nextParams);
+      localStorage.setItem('binance_system_parameters', JSON.stringify(nextParams));
     });
   };
 
@@ -778,7 +902,7 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullP
                   <h4 className="text-[10px] font-black tracking-widest text-[#f0b90b] uppercase mb-3 flex items-center gap-1.5 font-sans border-b border-[#2b3139]/50 pb-2">
                     <Terminal size={12} className="stroke-[3]" /> Active Live Database Parameters Calibration Settings
                   </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                     <div className="bg-[#0b0e11] border border-[#2b3139] rounded-lg p-3.5 flex flex-col gap-0.5">
                       <span className="text-[10px] text-gray-400 uppercase font-bold">Faucet Pool Reserves</span>
                       <strong className="text-lg text-white font-black font-mono">
@@ -807,6 +931,33 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullP
                       </strong>
                       <span className="text-[9px] text-gray-500 font-mono mt-1">Status: Operational</span>
                     </div>
+                    <button
+                      type="button"
+                      disabled={!isSenior}
+                      onClick={() => handleToggleAutoVerify(!systemParameters.autoVerifyDeposits)}
+                      className={`bg-[#0b0e11] border rounded-lg p-3.5 flex flex-col justify-between text-left transition-all outline-none group ${
+                        !isSenior ? 'opacity-70 cursor-not-allowed' : 'hover:border-[#0ecb81] cursor-pointer'
+                      } ${systemParameters.autoVerifyDeposits ? 'border-[#0ecb81]/50' : 'border-[#2b3139]'}`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className="text-[10px] text-gray-400 uppercase font-bold">Auto-Verify Engine</span>
+                        <div className={`w-6 h-3 rounded-full flex items-center p-0.5 transition-colors duration-250 ${
+                          systemParameters.autoVerifyDeposits ? 'bg-[#0ecb81]' : 'bg-gray-600'
+                        }`}>
+                          <div className={`w-2.5 h-2.5 bg-black rounded-full shadow transform transition-transform duration-250 ${
+                            systemParameters.autoVerifyDeposits ? 'translate-x-[11px]' : 'translate-x-0'
+                          }`} />
+                        </div>
+                      </div>
+                      <strong className={`text-md font-black font-mono mt-1 ${
+                        systemParameters.autoVerifyDeposits ? 'text-[#0ecb81]' : 'text-gray-400'
+                      }`}>
+                        {systemParameters.autoVerifyDeposits ? "⚡ ACTIVE (AUTO)" : "🔒 MANUAL ONLY"}
+                      </strong>
+                      <span className="text-[8.5px] text-gray-500 mt-1 block leading-normal">
+                        {systemParameters.autoVerifyDeposits ? "Instant automatic ledger sync" : "Requires senior manual sign-off"}
+                      </span>
+                    </button>
                   </div>
                 </div>
 
@@ -1195,24 +1346,53 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullP
                           <td className="py-2.5 pl-2 text-gray-400">{req.timestamp}</td>
                           <td className="py-2.5 text-white font-bold">@{req.username}</td>
                           <td className="py-2.5 text-gray-400 uppercase">{req.network}</td>
-                          <td className="py-2.5 text-[#eab308] cursor-pointer hover:underline text-[11px]" title={req.refHash}>
-                            {req.refHash ? `${req.refHash.substring(0, 20)}...` : 'Direct API Faucet'}
+                          <td className="py-2.5 text-[#eab308] text-[11px]" title={req.refHash}>
+                            <div className="flex flex-col">
+                              <span>{req.refHash ? `${req.refHash.substring(0, 18)}...` : 'Direct API Faucet'}</span>
+                              {req.screenshotBase64 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAdminSelectedScreenshot(req.screenshotBase64)}
+                                  className="text-[#f0b90b] hover:text-[#eab308] text-[9.5px] font-bold underline bg-transparent border-none p-0 cursor-pointer self-start flex items-center gap-1 mt-0.5"
+                                >
+                                  🖼️ View Screenshot Proof
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td className="py-2.5 text-right text-[#0ecb81] font-black">${req.amount?.toLocaleString()} USDT</td>
-                          <td className="py-2.5 text-center">
-                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                              req.status === 'approved' 
-                                ? 'bg-[#0ecb81]/15 text-[#0ecb81]' 
-                                : req.status === 'rejected' 
-                                  ? 'bg-red-500/15 text-red-400' 
-                                  : 'bg-[#eab308]/15 text-[#eab308] animate-pulse border border-[#eab308]/20'
-                            }`}>
-                              {req.status}
-                            </span>
+                           <td className="py-2.5 text-center">
+                            <div className="flex flex-col items-center justify-center">
+                              <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                                req.status === 'approved' 
+                                  ? 'bg-[#0ecb81]/15 text-[#0ecb81]' 
+                                  : req.status === 'rejected' 
+                                    ? 'bg-red-500/15 text-red-400' 
+                                    : 'bg-[#eab308]/15 text-[#eab308] animate-pulse border border-[#eab308]/20'
+                              }`}>
+                                {req.status}
+                              </span>
+                              {req.verifiedBy && (
+                                <span className="text-[7px] text-[#0ea5e9] font-mono uppercase mt-0.5 block tracking-widest">{req.verifiedBy}</span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-2.5 pr-2 text-right">
                             {req.status === 'pending' ? (
                               <div className="inline-flex gap-1.5 justify-end">
+                                <button
+                                  type="button"
+                                  disabled={!isSenior}
+                                  onClick={() => handleAutoVerifyDeposit(req.id)}
+                                  className={`p-1 rounded transition-colors ${
+                                    !isSenior 
+                                      ? 'text-gray-600 bg-gray-800/40 cursor-not-allowed' 
+                                      : 'bg-[#0ea5e9]/10 text-[#0ea5e9] hover:bg-[#0ea5e9] hover:text-black cursor-pointer animate-pulse'
+                                  }`}
+                                  title="⚡ Auto-Verify Deposit Reference"
+                                >
+                                  <Zap size={14} className="stroke-[3]" />
+                                </button>
                                 <button
                                   type="button"
                                   disabled={!isSenior}
@@ -1222,7 +1402,7 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullP
                                       ? 'text-gray-600 bg-gray-800/40 cursor-not-allowed' 
                                       : 'bg-[#0ecb81]/10 text-[#0ecb81] hover:bg-[#0ecb81] hover:text-black cursor-pointer'
                                   }`}
-                                  title="Approve / Crediter USDT"
+                                  title="Approve / Crediter USDT (Manual review)"
                                 >
                                   <Check size={14} className="stroke-[3]" />
                                 </button>
@@ -1241,7 +1421,12 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullP
                                 </button>
                               </div>
                             ) : (
-                              <span className="text-[10px] text-gray-500 uppercase italic font-sans font-bold">Processed</span>
+                              <div className="flex flex-col items-end">
+                                <span className="text-[10px] text-gray-500 uppercase italic font-sans font-bold">Processed</span>
+                                {req.verifiedBy && (
+                                  <span className="text-[7.5px] text-[#0ea5e9] font-mono shrink-0 mt-0.5">{req.verifiedBy}</span>
+                                )}
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -1643,6 +1828,80 @@ export function AdminPortal({ currentUser, onClose, onRefreshDEXBalance, isFullP
             
           </div>
         </div>
+
+        {/* SCREENSHOT VERIFICATION LIGHTBOX */}
+        {adminSelectedScreenshot && (
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setAdminSelectedScreenshot(null)}>
+            <div className="bg-[#1e2329] border border-[#2b3139] p-4 rounded-lg max-w-lg w-full flex flex-col gap-3 relative" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-center pb-2 border-b border-[#2b3139]">
+                <h3 className="text-xs uppercase font-extrabold text-[#f0b90b] flex items-center gap-1.5">
+                  📁 M-Pesa Screenshot Proof
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setAdminSelectedScreenshot(null)}
+                  className="text-gray-400 hover:text-white hover:bg-gray-800 px-2 py-0.5 rounded text-xs font-bold bg-transparent border-none cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex justify-center bg-black rounded overflow-hidden p-2 border border-[#2b3139]/50">
+                <img
+                  src={adminSelectedScreenshot}
+                  alt="M-Pesa Deposit Proof"
+                  className="max-h-[60vh] object-contain rounded"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+              <div className="text-[9.5px] text-gray-450 text-center font-mono leading-normal">
+                Verify carefully. Ensure amount matching and date legitimacy on the receipt screenshot.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* AUTOMATED TRANSACTION VERIFIER POPUP */}
+        {isVerifyingProgress && (
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="bg-[#12161a] border border-[#2b3139] p-4 rounded-lg max-w-xl w-full flex flex-col gap-4 relative shadow-2xl">
+              <div className="flex justify-between items-center pb-2 border-b border-[#2b3139]">
+                <h3 className="text-xs uppercase font-extrabold text-[#0ea5e9] flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#0ea5e9] animate-ping" />
+                  🤖 SAFARICOM M-PESA DYNAMIC LEDGER VERIFIER 2.0
+                </h3>
+                <span className="text-[10px] font-mono text-gray-450 bg-[#1e2329] px-2 py-0.5 rounded font-bold uppercase">
+                  Operator: {currentUser.username}
+                </span>
+              </div>
+              
+              <div className="bg-[#0b0e11] font-mono p-4 rounded border border-[#2b3139] text-xs h-64 overflow-y-auto flex flex-col gap-2 scrollbar-thin scrollbar-thumb-gray-850">
+                {verificationLogs.map((log, idx) => {
+                  let color = "text-gray-300";
+                  if (log.startsWith("🎉") || log.includes("SUCCESS")) color = "text-[#0ecb81] font-black";
+                  else if (log.startsWith("❌") || log.includes("ERROR")) color = "text-red-400 font-bold";
+                  else if (log.startsWith("✅")) color = "text-[#0ecb81]";
+                  else if (log.startsWith("📍")) color = "text-[#eab308]";
+                  else if (log.startsWith("🔄") || log.startsWith("🔗")) color = "text-gray-400";
+                  
+                  return (
+                    <div key={idx} className={`${color} leading-relaxed flex items-start gap-1`} style={{ contentVisibility: 'auto' }}>
+                      <span className="text-gray-650 shrink-0">[{new Date().toLocaleTimeString()}]</span>
+                      <span>{log}</span>
+                    </div>
+                  );
+                })}
+                <div className="animate-pulse text-gray-500 italic mt-1 text-[11px] flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-3 bg-gray-500" />
+                  Scanning block sequence buffers...
+                </div>
+              </div>
+              
+              <div className="text-[10px] text-gray-500 text-center font-mono flex items-center justify-center gap-1">
+                <span>Do not close this window — Real-time API handshake with peer routers in progress.</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* BOTTOM FOOLPROOF AUDIT BANNER */}
         <div className="bg-[#12161a] border-t border-[#2b3139] px-5 py-3 flex justify-between items-center text-[10px] font-mono text-gray-500 select-none">

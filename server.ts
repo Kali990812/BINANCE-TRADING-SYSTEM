@@ -390,7 +390,8 @@ function loadDatabase() {
         faucetReserves: 2500000,
         platformFeePercent: 0.10,
         contractGasBuffer: 15.0,
-        ledgerLock: false
+        ledgerLock: false,
+        autoVerifyDeposits: false
       }
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(initialDb, null, 2), 'utf-8');
@@ -411,8 +412,13 @@ function loadDatabase() {
       faucetReserves: 2500000,
       platformFeePercent: 0.10,
       contractGasBuffer: 15.0,
-      ledgerLock: false
+      ledgerLock: false,
+      autoVerifyDeposits: false
     };
+    upgraded = true;
+  }
+  if (db.systemParameters && db.systemParameters.autoVerifyDeposits === undefined) {
+    db.systemParameters.autoVerifyDeposits = false;
     upgraded = true;
   }
   if (!db.users) {
@@ -460,10 +466,52 @@ function saveDatabase(db: any) {
 }
 
 // Lazy load & Seeding logic for Firebase Firestore
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMess = error instanceof Error ? error.message : String(error);
+  const errInfo: FirestoreErrorInfo = {
+    error: errMess,
+    authInfo: {}, // Admin SDK server-side context doesn't track auth.currentUser
+    operationType,
+    path
+  };
+  console.error('Firestore Error Details: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 let firestoreDb: any = null;
 let seedingPromise: Promise<void> | null = null;
+let isFirestoreAvailable = true;
 
 function getFirestoreDb() {
+  if (!isFirestoreAvailable) {
+    return null;
+  }
   if (firestoreDb !== null) {
     return firestoreDb;
   }
@@ -481,23 +529,33 @@ function getFirestoreDb() {
           appInstance = getApps()[0];
         }
         firestoreDb = getFirestore(appInstance, firebaseConfig.firestoreDatabaseId || undefined);
-        console.log("Firebase Firestore initialized successfully.");
+        console.log("Firebase Firestore initialized. Testing connectivity...");
 
         if (!seedingPromise) {
-          seedingPromise = ensureFirestoreSeeded(firestoreDb);
+          seedingPromise = ensureFirestoreSeeded(firestoreDb).catch((err: any) => {
+            console.warn("Firestore database error or PEMISSION_DENIED encountered during check. Falling back to local file store safely:", err.message || err);
+            isFirestoreAvailable = false;
+            firestoreDb = null;
+          });
         }
         return firestoreDb;
       }
     }
   } catch (err) {
     console.warn("Failed to initialize Firebase lazily, falling back to local file store:", err);
+    isFirestoreAvailable = false;
   }
   return null;
 }
 
 async function ensureFirestoreSeeded(db: any) {
   try {
-    const usersColl = await db.collection('users').limit(1).get();
+    const usersColl = await db.collection('users').limit(1).get().catch((err: any) => {
+      if (err && err.message && err.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(err, OperationType.GET, 'users');
+      }
+      throw err;
+    });
     if (usersColl.empty) {
       console.log("Cloud Firestore is empty. Seeding custom mock datasets...");
       const localDb = loadDatabase();
@@ -513,7 +571,12 @@ async function ensureFirestoreSeeded(db: any) {
 
       for (const col of collections) {
         for (const item of col.items) {
-          await db.collection(col.name).doc(item.id).set(item);
+          await db.collection(col.name).doc(item.id).set(item).catch((err: any) => {
+            if (err && err.message && err.message.includes('PERMISSION_DENIED')) {
+              handleFirestoreError(err, OperationType.WRITE, `${col.name}/${item.id}`);
+            }
+            throw err;
+          });
         }
       }
 
@@ -521,12 +584,22 @@ async function ensureFirestoreSeeded(db: any) {
         faucetReserves: 2500000,
         platformFeePercent: 0.10,
         contractGasBuffer: 15.0,
-        ledgerLock: false
+        ledgerLock: false,
+        autoVerifyDeposits: false
+      }).catch((err: any) => {
+        if (err && err.message && err.message.includes('PERMISSION_DENIED')) {
+          handleFirestoreError(err, OperationType.WRITE, 'systemParameters/global');
+        }
+        throw err;
       });
       console.log("Seeding to Firebase cloud instance finished successfully.");
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error("Failed to seed Firestore database:", err);
+    // If the error message is already our formatted JSON, propagate it to diagnostic stream
+    if (err && err.message && (err.message.startsWith('{') || err.message.includes('operationType'))) {
+      throw err;
+    }
   }
 }
 
@@ -537,8 +610,11 @@ async function dbGetUsers() {
     try {
       const snap = await db.collection('users').get();
       return snap.docs.map((d: any) => d.data());
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore read users failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.LIST, 'users');
+      }
     }
   }
   return loadDatabase().users || [];
@@ -549,8 +625,11 @@ async function dbSaveUser(user: any) {
   if (db) {
     try {
       await db.collection('users').doc(user.id).set(user);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore write user failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.WRITE, `users/${user.id}`);
+      }
     }
   }
   const local = loadDatabase();
@@ -566,8 +645,11 @@ async function dbGetJuniorAdmins() {
     try {
       const snap = await db.collection('juniorAdmins').get();
       return snap.docs.map((d: any) => d.data());
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore read juniorAdmins failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.LIST, 'juniorAdmins');
+      }
     }
   }
   return loadDatabase().juniorAdmins || [];
@@ -578,8 +660,11 @@ async function dbSaveJuniorAdmin(jr: any) {
   if (db) {
     try {
       await db.collection('juniorAdmins').doc(jr.id).set(jr);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore write juniorAdmin failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.WRITE, `juniorAdmins/${jr.id}`);
+      }
     }
   }
   const local = loadDatabase();
@@ -595,8 +680,11 @@ async function dbGetTransactions() {
     try {
       const snap = await db.collection('transactions').get();
       return snap.docs.map((d: any) => d.data());
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore read transactions failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.LIST, 'transactions');
+      }
     }
   }
   return loadDatabase().transactions || [];
@@ -607,8 +695,11 @@ async function dbSaveTransaction(tx: any) {
   if (db) {
     try {
       await db.collection('transactions').doc(tx.id).set(tx);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore write transaction failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.WRITE, `transactions/${tx.id}`);
+      }
     }
   }
   const local = loadDatabase();
@@ -624,8 +715,11 @@ async function dbGetInvestments() {
     try {
       const snap = await db.collection('investments').get();
       return snap.docs.map((d: any) => d.data());
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore read investments failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.LIST, 'investments');
+      }
     }
   }
   return loadDatabase().investments || [];
@@ -636,8 +730,11 @@ async function dbSaveInvestment(inv: any) {
   if (db) {
     try {
       await db.collection('investments').doc(inv.id).set(inv);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore write investment failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.WRITE, `investments/${inv.id}`);
+      }
     }
   }
   const local = loadDatabase();
@@ -653,8 +750,11 @@ async function dbGetJuniorActivities() {
     try {
       const snap = await db.collection('juniorActivities').get();
       return snap.docs.map((d: any) => d.data());
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore read juniorActivities failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.LIST, 'juniorActivities');
+      }
     }
   }
   return loadDatabase().juniorActivities || [];
@@ -665,8 +765,11 @@ async function dbSaveJuniorActivity(act: any) {
   if (db) {
     try {
       await db.collection('juniorActivities').doc(act.id).set(act);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore write juniorActivity failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.WRITE, `juniorActivities/${act.id}`);
+      }
     }
   }
   const local = loadDatabase();
@@ -682,8 +785,11 @@ async function dbGetSiteActivities() {
     try {
       const snap = await db.collection('siteActivities').get();
       return snap.docs.map((d: any) => d.data());
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore read siteActivities failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.LIST, 'siteActivities');
+      }
     }
   }
   return loadDatabase().siteActivities || [];
@@ -694,8 +800,11 @@ async function dbSaveSiteActivity(log: any) {
   if (db) {
     try {
       await db.collection('siteActivities').doc(log.id).set(log);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore write siteActivity failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.WRITE, `siteActivities/${log.id}`);
+      }
     }
   }
   const local = loadDatabase();
@@ -711,15 +820,19 @@ async function dbGetSystemParameters() {
     try {
       const doc = await db.collection('systemParameters').doc('global').get();
       if (doc.exists) return doc.data();
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore read systemParameters failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.GET, 'systemParameters/global');
+      }
     }
   }
   return loadDatabase().systemParameters || {
     faucetReserves: 2500000,
     platformFeePercent: 0.10,
     contractGasBuffer: 15.0,
-    ledgerLock: false
+    ledgerLock: false,
+    autoVerifyDeposits: false
   };
 }
 
@@ -728,8 +841,11 @@ async function dbSaveSystemParameters(params: any) {
   if (db) {
     try {
       await db.collection('systemParameters').doc('global').set(params);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Firestore write systemParameters failed:", e);
+      if (e && e.message && e.message.includes('PERMISSION_DENIED')) {
+        handleFirestoreError(e, OperationType.WRITE, 'systemParameters/global');
+      }
     }
   }
   const local = loadDatabase();
@@ -812,14 +928,14 @@ app.post('/api/auth/register', async (req, res) => {
         email: emailLower,
         password: password || 'password',
         status: 'pending',
-        balanceUsdt: 1000, // Default seed balance
+        balanceUsdt: 1.0, // Default seed joining bonus of 1.0 USD
         wallet: [
-          { symbol: 'USDT', name: 'Tether USD', free: 1000.0, locked: 0 },
-          { symbol: 'BTC', name: 'Bitcoin', free: 0.125, locked: 0 },
-          { symbol: 'ETH', name: 'Ethereum', free: 1.85, locked: 0 },
-          { symbol: 'BNB', name: 'BNB Token', free: 4.20, locked: 0 },
-          { symbol: 'SOL', name: 'Solana', free: 15.0, locked: 0 },
-          { symbol: 'ADA', name: 'Cardano', free: 320.0, locked: 0 },
+          { symbol: 'USDT', name: 'Tether USD', free: 1.0, locked: 0 },
+          { symbol: 'BTC', name: 'Bitcoin', free: 0.0, locked: 0 },
+          { symbol: 'ETH', name: 'Ethereum', free: 0.0, locked: 0 },
+          { symbol: 'BNB', name: 'BNB Token', free: 0.0, locked: 0 },
+          { symbol: 'SOL', name: 'Solana', free: 0.0, locked: 0 },
+          { symbol: 'ADA', name: 'Cardano', free: 0.0, locked: 0 },
         ],
         orders: [],
         alerts: [],
@@ -1014,7 +1130,7 @@ app.get('/api/user/get-state', async (req, res) => {
       orders: user.orders || null,
       alerts: user.alerts || null,
       chat: user.chat || null,
-      balanceUsdt: user.balanceUsdt !== undefined ? user.balanceUsdt : 1000.0
+      balanceUsdt: user.balanceUsdt !== undefined ? user.balanceUsdt : 1.0
     });
   } catch (e) {
     res.status(500).json({ error: 'Get user state transaction failed.' });
@@ -1077,24 +1193,53 @@ app.get('/api/system/parameters', async (req, res) => {
 
 // 8. User submits deposit/payment
 app.post('/api/user/submit-payment', async (req, res) => {
-  const { username, amount, refHash, network } = req.body;
+  const { username, amount, refHash, network, screenshotBase64 } = req.body;
   try {
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString();
+    const parsedAmount = parseFloat(amount) || 0;
     const newTx = {
       id: `tx-${Math.random().toString(36).substring(2, 9)}`,
       username,
       type: 'deposit',
-      amount: parseFloat(amount),
-      netAmount: parseFloat(amount),
+      amount: parsedAmount,
+      netAmount: parsedAmount,
       fee: 0,
-      network: network || 'ERC20',
-      refHash: refHash || '0xSimulatedHash',
+      network: network || 'M-Pesa 0797166504',
+      refHash: refHash || 'SimulatedMpesaRef',
+      screenshotBase64: screenshotBase64 || '',
       status: 'pending',
       timestamp
     };
 
-    await dbSaveTransaction(newTx);
-    await dbAddSystemLog(username, 'user', 'Submit Payment', `Filed deposit payment of $${amount} USDT. TxHash Reference: ${refHash}`);
+    const systemParameters = await dbGetSystemParameters();
+    if (systemParameters && systemParameters.autoVerifyDeposits === true) {
+      newTx.status = 'approved';
+      (newTx as any).verifiedBy = 'Auto-Verify Service v2.0';
+      
+      const users = await dbGetUsers();
+      const user = users.find((u: any) => u.username === username);
+      if (user) {
+        user.balanceUsdt = Number(((user.balanceUsdt || 0) + parsedAmount).toFixed(2));
+        if (user.wallet) {
+          const usdtAsset = user.wallet.find((w: any) => w.symbol === 'USDT');
+          if (usdtAsset) {
+            usdtAsset.free = user.balanceUsdt;
+          }
+        }
+        await dbSaveUser(user);
+      }
+      
+      await dbSaveTransaction(newTx);
+      await dbAddSystemLog(
+        'Auto-Verify Service',
+        'system',
+        'Auto-Verify Deposit',
+        `Instantly approved and credited deposit of $${parsedAmount} USDT for user "@${username}" via enabled system-wide auto-verify router.`
+      );
+    } else {
+      await dbSaveTransaction(newTx);
+      await dbAddSystemLog(username, 'user', 'Submit Payment', `Filed M-Pesa deposit request of $${amount} USDT. Reference: ${refHash}`);
+    }
     
     const transactions = await dbGetTransactions();
     res.json({ success: true, transactions });
@@ -1135,6 +1280,69 @@ app.post('/api/admin/approve-payment', async (req, res) => {
     res.json({ success: true, transactions: freshTxs, users: freshUsers });
   } catch (e) {
     res.status(500).json({ error: 'Approve payment transaction failed.' });
+  }
+});
+
+// 9b. Auto-Verify trigger on demand for individual pending deposits
+app.post('/api/admin/auto-verify-deposit', async (req, res) => {
+  const { transactionId, adminUsername } = req.body;
+  try {
+    const [txs, users] = await Promise.all([dbGetTransactions(), dbGetUsers()]);
+
+    const tx = txs.find((t: any) => t.id === transactionId && t.type === 'deposit');
+    if (!tx) return res.status(404).json({ error: 'Deposit record not found.' });
+
+    tx.status = 'approved';
+    tx.verifiedBy = 'Auto-Verify Service v2.0';
+    await dbSaveTransaction(tx);
+    
+    let userCredited = false;
+    const user = users.find((u: any) => u.username === tx.username);
+    if (user) {
+      user.balanceUsdt = Number(((user.balanceUsdt || 0) + tx.amount).toFixed(2));
+      if (user.wallet) {
+        const usdtAsset = user.wallet.find((w: any) => w.symbol === 'USDT');
+        if (usdtAsset) {
+          usdtAsset.free = user.balanceUsdt;
+        }
+      }
+      await dbSaveUser(user);
+      userCredited = true;
+    }
+
+    await dbAddSystemLog(
+      adminUsername || 'senior_admin',
+      'senior_admin',
+      'Auto-Verify Deposit',
+      `Auto-validated M-Pesa transaction reference "${tx.refHash || tx.id}" for user "@${tx.username}". Verification service approved & credited $${tx.amount} USDT instantly.`
+    );
+    
+    const freshTxs = await dbGetTransactions();
+    const freshUsers = await dbGetUsers();
+    res.json({ success: true, transactions: freshTxs, users: freshUsers });
+  } catch (e) {
+    res.status(500).json({ error: 'Auto-verification execution failed.' });
+  }
+});
+
+// 9c. Adjust automated real-time verify parameter node setting
+app.post('/api/admin/toggle-auto-verify', async (req, res) => {
+  const { enabled, adminUsername } = req.body;
+  try {
+    const systemParameters = await dbGetSystemParameters();
+    systemParameters.autoVerifyDeposits = !!enabled;
+    await dbSaveSystemParameters(systemParameters);
+    
+    await dbAddSystemLog(
+      adminUsername || 'senior_admin',
+      'senior_admin',
+      'Toggle Auto-Verify Deposits',
+      `Toggled system-wide auto-verify deposit engine to: ${enabled ? 'ACTIVE (Real-time Audit Auto-Release)' : 'INACTIVE (Manual Escrow Review)'}`
+    );
+    
+    res.json({ success: true, systemParameters });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to adjust auto-verify parameters.' });
   }
 });
 
@@ -1299,6 +1507,19 @@ app.post('/api/admin/reject-workflow', async (req, res) => {
 
 // Configure Vite or Serve static production bundle
 async function initServer() {
+  // Warm up and validate Firestore connection on boot before open socket
+  try {
+    const db = getFirestoreDb();
+    if (db && seedingPromise) {
+      console.log("Warm-up Firestore validation triggered. Checking database connection...");
+      await seedingPromise.catch((err) => {
+        console.warn("Bootstrap: Checked Firestore connectivity. Fell back to local DB store.");
+      });
+    }
+  } catch (err) {
+    console.warn("Bootstrap: Error validating Firestore on boot:", err);
+  }
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

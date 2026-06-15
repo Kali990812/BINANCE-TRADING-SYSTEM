@@ -16,7 +16,16 @@ import { AuthPage } from './components/AuthPage';
 import { AdminPortal } from './components/AdminPortal';
 
 // Icons
-import { Sparkles, Star, TrendingUp, TrendingDown, BookOpen, AlertCircle, RefreshCw, Bell, Sliders, Gift, Users, ArrowRight, ShieldAlert, User } from 'lucide-react';
+import { Sparkles, Star, TrendingUp, TrendingDown, BookOpen, AlertCircle, RefreshCw, Bell, Sliders, Gift, Users, ArrowRight, ShieldAlert, User, Briefcase, Landmark, History, Home, Layers, Copy, Check, Upload, ArrowUp, ArrowDown, LogOut } from 'lucide-react';
+
+export const COMPACT_PLANS = [
+  { id: 'bronze', name: 'Bronze Starter Plan', minDeposit: 10, yieldDaily: 5.0, durationDays: 10 },
+  { id: 'silver', name: 'Silver Active Plan', minDeposit: 20, yieldDaily: 5.5, durationDays: 15 },
+  { id: 'gold', name: 'Gold Premium Plan', minDeposit: 30, yieldDaily: 6.0, durationDays: 20 },
+  { id: 'vip', name: 'VIP Tier Plan', minDeposit: 50, yieldDaily: 7.0, durationDays: 30 },
+  { id: 'platinum', name: 'Platinum Sovereign Plan', minDeposit: 100, yieldDaily: 8.0, durationDays: 35 },
+  { id: 'prestige', name: 'Prestige Paramount Plan', minDeposit: 200, yieldDaily: 10.0, durationDays: 40 },
+];
 
 export default function App() {
   // User Authentication profile state
@@ -24,6 +33,8 @@ export default function App() {
     const saved = localStorage.getItem('binance_current_user');
     return saved ? JSON.parse(saved) : null;
   });
+
+  const [userSelectedScreenshot, setUserSelectedScreenshot] = useState<string | null>(null);
 
   // Track the active admin portal modal status
   const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
@@ -201,6 +212,17 @@ export default function App() {
 
   // 10.7. Notifications Drawer states
   const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [userTab, setUserTab] = useState<'home' | 'packages' | 'finance' | 'history' | 'trade'>('home');
+  const [depositScreenshotBase64, setDepositScreenshotBase64] = useState<string>('');
+  const [depositMpesaCode, setDepositMpesaCode] = useState<string>('');
+  const [depositFieldAmount, setDepositFieldAmount] = useState<string>('');
+  const [isDepositSubmitting, setIsDepositSubmitting] = useState<boolean>(false);
+  const [withdrawMpesaNumber, setWithdrawMpesaNumber] = useState<string>('');
+  const [withdrawFieldAmount, setWithdrawFieldAmount] = useState<string>('');
+  const [isWithdrawSubmitting, setIsWithdrawSubmitting] = useState<boolean>(false);
+  const [activeInvestments, setActiveInvestments] = useState<any[]>(() => {
+    return JSON.parse(localStorage.getItem('binance_active_investments') || '[]');
+  });
   const [leverage, setLeverage] = useState<number>(() => {
     const saved = localStorage.getItem('binance_mock_leverage');
     return saved ? parseInt(saved) : 20;
@@ -295,6 +317,290 @@ export default function App() {
       return () => clearTimeout(delayCommit);
     }
   }, [wallet, orders, alerts, chatHistory, currentUser]);
+
+  // Save active investments when modified
+  useEffect(() => {
+    localStorage.setItem('binance_active_investments', JSON.stringify(activeInvestments));
+  }, [activeInvestments]);
+
+  // Handle standard user claim yield
+  const handleUserClaimYield = (id: string) => {
+    const target = activeInvestments.find(inv => inv.id === id);
+    if (!target || target.accruedProfit <= 0) return;
+
+    const payout = target.accruedProfit;
+
+    const updatedWallet = wallet.map(w => {
+      if (w.symbol === 'USDT') {
+        const currentFree = parseFloat((w.free || 0).toString());
+        return { ...w, free: Number((currentFree + payout).toFixed(2)) };
+      }
+      return w;
+    });
+    setWallet(updatedWallet);
+    localStorage.setItem('binance_mock_wallet', JSON.stringify(updatedWallet));
+
+    const storedLogsRaw = localStorage.getItem('binance_site_activities');
+    const siteLogs = storedLogsRaw ? JSON.parse(storedLogsRaw) : [];
+    siteLogs.unshift({
+      id: `log-${Math.random().toString(36).substring(2, 9)}`,
+      actor: currentUser?.username || 'user',
+      role: 'user',
+      action: 'Claim Dividends',
+      details: `Claimed +$${payout.toFixed(4)} USDT from active contract "${target.planName}".`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
+    });
+    localStorage.setItem('binance_site_activities', JSON.stringify(siteLogs));
+
+    setActiveInvestments(prev =>
+      prev.map(inv =>
+        inv.id === id ? { ...inv, accruedProfit: 0, lastUpdated: Date.now() } : inv
+      )
+    );
+
+    triggerToast(`Claimed +$${payout.toFixed(2)} USDT dividend successfully!`);
+  };
+
+  const handleUserFastForwardYield = (id: string) => {
+    setActiveInvestments(prev =>
+      prev.map(inv => {
+        if (inv.id !== id) return inv;
+        const dailyUsd = inv.yieldDailyUsd || (inv.depositAmount * (inv.yieldDaily / 100));
+        const currentAccrued = parseFloat((inv.accruedProfit || 0).toString());
+        return {
+          ...inv,
+          timestamp: inv.timestamp - (24 * 60 * 60 * 1000),
+          accruedProfit: Number((currentAccrued + dailyUsd).toFixed(4)),
+          lastUpdated: Date.now()
+        };
+      })
+    );
+    triggerToast("Demo: Advanced contract clock by +24h! Accrued new yield.");
+  };
+
+  const handleUserBuyPlan = (plan: { id: string; name: string; minDeposit: number; yieldDaily: number; durationDays: number }) => {
+    const cost = plan.minDeposit;
+    const usdtAsset = wallet.find(w => w.symbol === 'USDT') || { symbol: 'USDT', name: 'Tether USD', free: 1.0, locked: 0 };
+    if (usdtAsset.free < cost) {
+      alert(`Insufficient balance! Your premium balance is $${usdtAsset.free.toFixed(2)} USDT, but the ${plan.name} package requires exactly $${cost.toFixed(2)} USDT capital. Please navigate to the "Deposit" tab and pay via M-Pesa!`);
+      setUserTab('finance');
+      return;
+    }
+
+    const updatedWallet = wallet.map(w => {
+      if (w.symbol === 'USDT') {
+        return { ...w, free: Number((w.free - cost).toFixed(2)) };
+      }
+      return w;
+    });
+    setWallet(updatedWallet);
+    localStorage.setItem('binance_mock_wallet', JSON.stringify(updatedWallet));
+
+    const pendingReq = {
+      id: `inv-${Math.random().toString(36).substring(2, 9)}`,
+      username: currentUser?.username || 'user',
+      planId: plan.id,
+      planName: plan.name,
+      depositAmount: cost,
+      yieldDaily: plan.yieldDaily,
+      yieldDailyUsd: Number((cost * (plan.yieldDaily / 100)).toFixed(2)),
+      timestamp: Date.now(),
+      durationDays: plan.durationDays,
+      status: 'pending'
+    };
+
+    const storedInvsRaw = localStorage.getItem('binance_investment_requests') || '[]';
+    let localReqs = [];
+    try { localReqs = JSON.parse(storedInvsRaw); } catch { localReqs = []; }
+    localReqs.unshift(pendingReq);
+    localStorage.setItem('binance_investment_requests', JSON.stringify(localReqs));
+
+    fetch('/api/user/submit-investment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: currentUser?.username,
+        planId: plan.id,
+        depositAmount: cost,
+        yieldDailyUsd: (cost * (plan.yieldDaily / 100)),
+        durationDays: plan.durationDays
+      })
+    })
+    .then(() => {
+      triggerToast(`Staked $${cost} USDT in ${plan.name}!`);
+      alert(`Staking package initiated successfully!\nPlan: ${plan.name}\nAmount: $${cost} USDT\nStatus: Pending Senior Admin approval. Once approved, interest dividends start accumulating!`);
+    })
+    .catch(e => {
+      console.warn("Backend staking submission offline, cached:", e);
+      triggerToast(`Secured offline staking record.`);
+    });
+  };
+
+  const handleUserSubmitDeposit = (e: any) => {
+    e.preventDefault();
+    const amtVal = parseFloat(depositFieldAmount);
+    if (isNaN(amtVal) || amtVal < 10) {
+      alert("Please enter a valid deposit amount of at least $10.00 USDT.");
+      return;
+    }
+    if (!depositMpesaCode || depositMpesaCode.trim().length < 6) {
+      alert("Please enter a valid M-Pesa transaction reference code (at least 6 characters).");
+      return;
+    }
+    if (!depositScreenshotBase64) {
+      alert("Please upload a proof of payment screenshot before confirming your deposit.");
+      return;
+    }
+
+    setIsDepositSubmitting(true);
+
+    const newTx = {
+      id: `tx-${Math.random().toString(36).substring(2, 9)}`,
+      username: currentUser?.username || 'user',
+      type: 'deposit',
+      amount: amtVal,
+      netAmount: amtVal,
+      fee: 0,
+      network: 'M-Pesa 0797166504',
+      refHash: depositMpesaCode.trim().toUpperCase(),
+      screenshotBase64: depositScreenshotBase64,
+      status: 'pending',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
+    };
+
+    const storedTxRaw = localStorage.getItem('binance_transaction_requests') || '[]';
+    let txs = [];
+    try { txs = JSON.parse(storedTxRaw); } catch { txs = []; }
+    txs.unshift(newTx);
+    localStorage.setItem('binance_transaction_requests', JSON.stringify(txs));
+
+    fetch('/api/user/submit-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: currentUser?.username,
+        amount: amtVal,
+        refHash: depositMpesaCode.trim().toUpperCase(),
+        network: 'M-Pesa 0797166504',
+        screenshotBase64: depositScreenshotBase64
+      })
+    })
+    .then(async (res) => {
+      setIsDepositSubmitting(false);
+      if (res.ok) {
+        alert(`Payment verification filed successfully!\nReference: ${depositMpesaCode.toUpperCase()}\nAmount: $${amtVal} USDT\nStatus: Pending verification. A Senior Administrator will inspect your screenshot proof and credit your wallet shortly.`);
+        setDepositFieldAmount('');
+        setDepositMpesaCode('');
+        setDepositScreenshotBase64('');
+        triggerToast("Deposit payment queued for verification!");
+      } else {
+        const err = await res.json();
+        alert(`Submission failed: ${err.error}`);
+      }
+    })
+    .catch(e => {
+      console.warn("Express submit payment failed, locally queued:", e);
+      setIsDepositSubmitting(false);
+      alert(`Deposit request of $${amtVal} filed (offline fallback). Reference: ${depositMpesaCode.toUpperCase()}. Pending Admin approval.`);
+      setDepositFieldAmount('');
+      setDepositMpesaCode('');
+      setDepositScreenshotBase64('');
+    });
+  };
+
+  const handleUserSubmitWithdrawal = (e: any) => {
+    e.preventDefault();
+    const amtVal = parseFloat(withdrawFieldAmount);
+    
+    // Check if they have active/pending investments
+    const localReqs = JSON.parse(localStorage.getItem('binance_investment_requests') || '[]');
+    const hasInvestments = activeInvestments.length > 0 || localReqs.some((r: any) => r.username === currentUser?.username);
+    
+    if (!hasInvestments) {
+      alert("Platform policy: Withdrawals are locked for new users in order to protect against account creation abuse. To unlock your $1.00 join bonus and other funds, you must first join the site and purchase a package in the Staking Packages tab.");
+      setUserTab('packages');
+      return;
+    }
+
+    const usdtAsset = wallet.find(w => w.symbol === 'USDT') || { symbol: 'USDT', name: 'Tether USD', free: 0.0, locked: 0 };
+    if (isNaN(amtVal) || amtVal <= 0) {
+      alert("Please enter a valid withdrawal amount.");
+      return;
+    }
+    if (amtVal > usdtAsset.free) {
+      alert(`Insufficient funds! Your maximum withdrawable balance is $${usdtAsset.free.toFixed(2)} USDT.`);
+      return;
+    }
+    if (!withdrawMpesaNumber || withdrawMpesaNumber.trim().length < 8) {
+      alert("Please enter a valid phone number for M-Pesa payout.");
+      return;
+    }
+
+    setIsWithdrawSubmitting(true);
+    const fee = Number((amtVal * 0.09).toFixed(2));
+    const netPayout = Number((amtVal - fee).toFixed(2));
+
+    const newTx = {
+      id: `tx-${Math.random().toString(36).substring(2, 9)}`,
+      username: currentUser?.username || 'user',
+      type: 'withdrawal',
+      amount: amtVal,
+      netAmount: netPayout,
+      fee: fee,
+      network: 'M-Pesa Payout Desk',
+      refHash: `WITHDRAW-${withdrawMpesaNumber}-${Math.random().toString(36).substring(3, 8).toUpperCase()}`,
+      screenshotBase64: '',
+      status: 'pending',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + new Date().toLocaleDateString()
+    };
+
+    const storedTxRaw = localStorage.getItem('binance_transaction_requests') || '[]';
+    let txs = [];
+    try { txs = JSON.parse(storedTxRaw); } catch { txs = []; }
+    txs.unshift(newTx);
+    localStorage.setItem('binance_transaction_requests', JSON.stringify(txs));
+
+    const updatedWallet = wallet.map(w => {
+      if (w.symbol === 'USDT') {
+        return { ...w, free: Number((w.free - amtVal).toFixed(2)) };
+      }
+      return w;
+    });
+    setWallet(updatedWallet);
+    localStorage.setItem('binance_mock_wallet', JSON.stringify(updatedWallet));
+
+    fetch('/api/user/submit-withdrawal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: currentUser?.username,
+        amount: amtVal,
+        fee: fee,
+        netAmount: netPayout,
+        address: withdrawMpesaNumber,
+        network: 'M-Pesa Payout Desk'
+      })
+    })
+    .then(async (res) => {
+      setIsWithdrawSubmitting(false);
+      if (res.ok) {
+        alert(`Withdrawal Filed Successfully!\nAmount: $${amtVal} USDT\nFee (9% flat): $${fee} USDT\nNet Payout: $${netPayout} USDT\nQueued to phone: ${withdrawMpesaNumber}\nStatus: Pending Admin approval.`);
+        setWithdrawFieldAmount('');
+        setWithdrawMpesaNumber('');
+        triggerToast("Withdrawal request dispatched!");
+      } else {
+        const err = await res.json();
+        alert(`Withdrawal failed: ${err.error}`);
+      }
+    })
+    .catch(e => {
+      console.warn("Backend submit withdrawal failed, offline fallback applied:", e);
+      setIsWithdrawSubmitting(false);
+      alert(`Withdrawal of $${amtVal} USDT queued offline. Ref: WITHDRAW-${withdrawMpesaNumber}`);
+      setWithdrawFieldAmount('');
+      setWithdrawMpesaNumber('');
+    });
+  };
 
   // Helper to add unified notification
   const addNotification = (
@@ -1179,13 +1485,7 @@ export default function App() {
             </div>
           )}
 
-          <button
-            id="faucet-header-btn"
-            onClick={handleRunFaucet}
-            className="text-[10.5px] font-bold text-[#f0b90b] bg-[#f0b90b]/10 border border-[#f0b90b]/30 rounded px-2.5 py-1 hover:bg-[#f0b90b] hover:text-black transition-all cursor-pointer"
-          >
-            USDT Faucet
-          </button>
+
 
           {/* Global Alert Bell Button */}
           <button
@@ -1229,6 +1529,896 @@ export default function App() {
             onRefreshDEXBalance={refreshWalletFromStore}
             isFullPage={true}
           />
+        </div>
+      ) : currentUser?.role === 'user' ? (
+        <div className="flex-1 w-full flex flex-col bg-[#0b0e11] text-gray-100 overflow-y-auto select-none pb-24">
+          
+          {/* TOP USER NAVIGATION HEADER */}
+          <div className="bg-[#12161a] border-b border-[#2b3139] px-4 py-3 flex justify-between items-center shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🌟</span>
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wide text-white font-sans flex items-center gap-1.5">
+                  Secure Workspace Portal
+                </h2>
+                <p className="text-[10px] text-gray-400 font-mono">Verified Account: {currentUser.name}</p>
+              </div>
+            </div>
+            
+            {/* Quick Balance display & logout */}
+            <div className="flex items-center gap-3">
+              <div className="bg-[#1e2329] border border-[#2b3139] px-3 py-1 rounded flex items-center gap-1.5">
+                <span className="text-[9px] uppercase font-bold text-[#f0b90b] tracking-wider font-mono">WALLET:</span>
+                <span className="text-xs font-mono font-extrabold text-[#0ecb81]">
+                  ${(wallet.find(w => w.symbol === 'USDT')?.free || 1.0).toFixed(2)} USDT
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  localStorage.removeItem('binance_current_user');
+                  window.location.reload();
+                }}
+                className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-all cursor-pointer font-medium border-none"
+              >
+                <LogOut size={12} />
+                <span className="hidden sm:inline">Logout</span>
+              </button>
+            </div>
+          </div>
+
+          {/* TAB SHEETS */}
+          <div className="flex-1 max-w-4xl w-full mx-auto px-4 py-6 flex flex-col gap-6">
+            
+            {/* TAB INTERACTIVE BODY */}
+            {userTab === 'home' && (
+              <div className="flex flex-col gap-5">
+                
+                {/* 1. Welcome Header Banner */}
+                <div className="bg-gradient-to-r from-[#161a1e] to-[#1e2229] border border-[#2b3139] rounded-xl p-5 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-8 opacity-5 text-8xl pointer-events-none select-none">💎</div>
+                  <div className="flex items-center gap-4">
+                    <div className="bg-[#f0b90b]/10 text-[#f0b90b] p-3 rounded-full border border-[#f0b90b]/20">
+                      <User size={28} />
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-[#f0b90b] tracking-widest font-mono">Member Account Profile</div>
+                      <h3 className="text-lg font-extrabold text-white mt-0.5">Welcome back, {currentUser.name}! 👋</h3>
+                      <p className="text-xs text-gray-400 mt-1">Your secure staking capital is actively generating dividends daily. Secure and decentralized core routing enabled.</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-4 border-t border-[#2b3139]/60 flex flex-wrap gap-4 text-[11px] text-gray-400 font-mono">
+                    <span>📧 Email: <strong className="text-white">{currentUser.email}</strong></span>
+                    <span>👤 Username: <strong className="text-white">{currentUser.username}</strong></span>
+                    <span>🏷️ Rank: <strong className="text-[#f0b90b] uppercase">Active VIP Staker</strong></span>
+                  </div>
+                </div>
+
+                {/* 2. Bento virtual wallet grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  
+                  {/* MAIN WALLET CARD */}
+                  <div className="bg-[#12161a] border-2 border-[#f0b90b]/80 rounded-xl p-5 flex flex-col justify-between shadow-lg relative overflow-hidden">
+                    <div className="absolute top-0 right-0 bg-[#f0b90b] text-[#12161a] text-[8.5px] font-bold font-mono px-2 py-0.5 uppercase tracking-wider rounded-bl">
+                      Primary Virtual Wallet
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 text-xs text-gray-450 font-medium">
+                        <Landmark size={14} className="text-[#f0b90b]" />
+                        <span>AVAILABLE LIQUIDITY</span>
+                      </div>
+                      <div className="text-3xl font-extrabold text-white tracking-tight mt-2.5 font-mono">
+                        ${(wallet.find(w => w.symbol === 'USDT')?.free || 1.0).toFixed(2)}
+                        <span className="text-sm text-gray-400 ml-1.5 font-sans font-medium">USDT</span>
+                      </div>
+                    </div>
+                    <div className="mt-5 pt-3 border-t border-[#2b3139] flex justify-between items-center text-[10px] font-mono text-gray-500">
+                      <span>Refreshed: Real-time UTC</span>
+                      <span className="text-[#0ecb81] font-bold">● Network Online</span>
+                    </div>
+                  </div>
+
+                  {/* JOIN BONUS CARD */}
+                  <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl p-5 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                        <Gift size={15} className="text-orange-450" />
+                        <span>JOINING REWARD</span>
+                      </div>
+                      <div className="text-2xl font-extrabold text-white tracking-tight mt-2.5 font-mono">
+                        $1.00 <span className="text-xs text-gray-400 font-sans font-normal">USDT</span>
+                      </div>
+                    </div>
+                    <div className="text-[10.5px] text-gray-400 leading-normal mt-3 bg-orange-500/10 border border-orange-500/20 p-2 rounded">
+                      🎁 <strong>withdrawable claim rule:</strong> Available automatically once you make your first staking package investment!
+                    </div>
+                  </div>
+
+                  {/* ACCUMULATED YIELD CARD */}
+                  <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl p-5 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                        <Sparkles size={15} className="text-[#f0b90b]" />
+                        <span>YIELD & EARNINGS</span>
+                      </div>
+                      <div className="text-2xl font-extrabold text-[#0ecb81] tracking-tight mt-2.5 font-mono">
+                        ${(activeInvestments.reduce((sum, inv) => sum + (inv.accruedProfit || 0), 0) + totalReferralEarnings * 0.05).toFixed(2)}
+                        <span className="text-xs text-gray-400 ml-1.5 font-sans font-normal">USDT</span>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-gray-400 leading-relaxed mt-4">
+                      Includes claimed & unclaimed daily yields + real-time VIP contract affiliate commissions.
+                    </p>
+                  </div>
+
+                </div>
+
+                {/* 3. Quick Stats & Referrals Option */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  
+                  {/* REFERRAL BOX */}
+                  <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl p-5 flex flex-col gap-3">
+                    <div className="flex items-center justify-between font-mono text-xs">
+                      <h4 className="text-xs uppercase font-extrabold text-[#f0b90b] tracking-wider flex items-center gap-1.5">
+                        <Users size={14} /> Referral Affiliate Program
+                      </h4>
+                      <span className="text-[10px] bg-[#f0b90b]/15 text-[#f0b90b] px-2 py-0.5 rounded font-bold font-mono">5% Commission</span>
+                    </div>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      Invite friends to join and earn 5.0% commission instantly on every starting package they acquire!
+                    </p>
+                    
+                    <div className="bg-[#1e2329] border border-[#2b3139] rounded p-2.5 flex items-center justify-between gap-2 mt-1">
+                      <span className="text-[10px] font-mono text-gray-300 overflow-hidden text-ellipsis whitespace-nowrap select-all">
+                        https://aistudio.build/ref?code={currentUser.username}
+                      </span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`https://aistudio.build/ref?code=${currentUser.username}`);
+                          triggerToast("Referral link copied!");
+                          alert("Referral link copied to clipboard!\nShare this link to claim a 5% instant commission payout as soon as referees invest.");
+                        }}
+                        className="bg-[#f0b90b] hover:bg-[#dfaa0a] text-black text-[10px] font-bold px-3 py-1 rounded shrink-0 flex items-center gap-1 transition-all cursor-pointer border-none"
+                      >
+                        <Copy size={11} /> Copy
+                      </button>
+                    </div>
+                    
+                    <div className="text-[10px] text-gray-500 font-mono flex justify-between pr-2 mt-1">
+                      <span>Referees: 3 Members</span>
+                      <span>Total Commissions: ${(totalReferralEarnings * 0.05).toFixed(2)} USDT</span>
+                    </div>
+                  </div>
+
+                  {/* ACTIVE INVESTMENT STATUS */}
+                  <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl p-5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between font-mono text-xs">
+                      <h4 className="text-xs uppercase font-extrabold text-blue-400 tracking-wider flex items-center gap-1.5">
+                        <Briefcase size={14} /> Staking Status Summary
+                      </h4>
+                      <span className="text-[10px] font-bold font-mono text-gray-400">
+                        {activeInvestments.length} Running Contracts
+                      </span>
+                    </div>
+                    
+                    {activeInvestments.length === 0 ? (
+                      <div className="py-4 text-center">
+                        <p className="text-xs text-gray-400 italic">No running investment package found.</p>
+                        <button
+                          onClick={() => setUserTab('packages')}
+                          className="mt-3 inline-block bg-[#1e2329] hover:bg-gray-800 border border-[#2b3139] text-white text-xs px-3 py-1.5 rounded transition-colors font-medium cursor-pointer"
+                        >
+                          View Investment Packages →
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2 mt-2 max-h-[140px] overflow-y-auto pr-1">
+                        {activeInvestments.slice(0, 3).map((inv: any) => (
+                          <div key={inv.id} className="bg-[#1e2329] border border-[#2b3139]/80 p-2.5 rounded flex justify-between items-center text-[11px]">
+                            <div>
+                              <span className="font-extrabold text-white block">{inv.planName}</span>
+                              <span className="text-[9px] text-gray-500 font-mono">Capital: ${inv.depositAmount} USDT</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[#0ecb81] font-bold font-mono">+{inv.yieldDaily}% Daily</span>
+                              <span className="text-[9.5px] text-gray-450 block font-mono">Accrued: ${inv.accruedProfit.toFixed(2)} USDT</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="text-[10px] text-gray-500 font-mono mt-2 pr-2 text-right">
+                      <span className="cursor-pointer text-[#f0b90b] underline hover:text-[#dfaa0a]" onClick={() => setUserTab('packages')}>
+                        Manage packages & Claim Yield 
+                      </span>
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+
+            {userTab === 'packages' && (
+              <div className="flex flex-col gap-6">
+                <div className="border-b border-[#2b3139] pb-3 text-sans">
+                  <h3 className="text-base font-extrabold text-white uppercase tracking-wider">
+                    Premium Capital Staking Options
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Allocate your USDT into high-performance smart contracts. Interest accumulates on a daily basis and is claimable directly to your wallet.
+                  </p>
+                </div>
+
+                {/* 1. Staking Grid Packages list */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {COMPACT_PLANS.map((plan) => {
+                    const usdtAsset = wallet.find(w => w.symbol === 'USDT') || { free: 1.0 };
+                    const isAffordable = usdtAsset.free >= plan.minDeposit;
+                    return (
+                      <div key={plan.id} className="bg-[#161a1e] border border-[#2b3139] hover:border-[#f0b90b]/50 rounded-xl p-4 flex flex-col gap-3 relative transition-all group shadow-md">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="text-[9.5px] uppercase font-bold text-[#f0b90b] tracking-wider font-mono">
+                              FIXED CONTRACT
+                            </span>
+                            <h4 className="text-sm font-extrabold text-white mt-0.5">{plan.name}</h4>
+                          </div>
+                          <span className="text-xl">💰</span>
+                        </div>
+
+                        <div className="bg-[#1e2329]/80 rounded p-2.5 font-mono text-[11px] text-gray-400 flex flex-col gap-1.5">
+                          <div className="flex justify-between">
+                            <span>Requires:</span>
+                            <strong className="text-white">${plan.minDeposit} USDT</strong>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Daily Yield:</span>
+                            <strong className="text-[#0ecb81]">+{plan.yieldDaily}% Daily</strong>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Yield Payout:</span>
+                            <strong className="text-white">${(plan.minDeposit * (plan.yieldDaily / 100)).toFixed(2)} / Day</strong>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Contract Term:</span>
+                            <strong className="text-gray-300">{plan.durationDays} Days</strong>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleUserBuyPlan(plan)}
+                          className={`w-full py-2 text-xs font-bold rounded flex items-center justify-center gap-1 cursor-pointer transition-all border-none ${
+                            isAffordable
+                              ? 'bg-[#f0b90b] hover:bg-[#dfaa0a] text-black'
+                              : 'bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30'
+                          }`}
+                        >
+                          {isAffordable ? '⚡ Stake & Allocate Capital' : '❌ Insufficient USDT (Deposit Open)'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* 2. Active staking interest claim desk */}
+                <div className="bg-[#12161a] border border-[#2b3139] rounded-xl p-5 mt-4 text-sans">
+                  <div className="flex justify-between items-center border-b border-[#2b3139] pb-3 mb-4">
+                    <h4 className="text-xs uppercase font-extrabold text-[#f0b90b] tracking-widest flex items-center gap-1.5 font-mono">
+                      🏆 Active Yield Claiming Desk
+                    </h4>
+                    <span className="text-[10px] text-gray-500 font-mono">Claim dividends on a daily basis</span>
+                  </div>
+
+                  {activeInvestments.length === 0 ? (
+                    <div className="py-8 text-center text-gray-500 text-xs italic">
+                      No approved active investment packages are currently running. Select and purchase a package above to begin generating daily interest!
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-4">
+                      {activeInvestments.map((inv: any) => {
+                        const canClaim = inv.accruedProfit > 0;
+                        return (
+                          <div key={inv.id} className="bg-[#161a1e] border border-[#2b3139] p-4 rounded-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-sm text-white">{inv.planName}</span>
+                                <span className="text-[9.5px] bg-[#0ecb81]/15 text-[#0ecb81] font-bold px-2 py-0.5 rounded uppercase font-mono tracking-wider">
+                                  Yielding
+                                </span>
+                              </div>
+                              <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5 font-mono text-[11px] text-gray-400">
+                                <div>Staked capital: <strong className="text-white">${inv.depositAmount} USDT</strong></div>
+                                <div>Daily return: <strong className="text-[#0ecb81]">+{inv.yieldDaily}%</strong></div>
+                                <div>Accrued rewards: <strong className="text-[#0ecb81]">${inv.accruedProfit ? inv.accruedProfit.toFixed(4) : "0.0000"} USDT</strong></div>
+                                <div>Status: <strong className="text-[#0ecb81] uppercase font-bold text-[10px]">Active</strong></div>
+                              </div>
+                            </div>
+
+                            {/* Verification tools + Claim Button */}
+                            <div className="flex items-center gap-2 w-full md:w-auto shrink-0 border-t md:border-t-0 border-[#2b3139]/60 pt-3 md:pt-0">
+                              <button
+                                type="button"
+                                onClick={() => handleUserFastForwardYield(inv.id)}
+                                className="bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 font-mono text-[10px] px-2.5 py-1.5 rounded transition-all cursor-pointer font-bold"
+                                title="Gain +24 hours of dividends in sandbox instantly for demo testing"
+                              >
+                                ⏳ Fast-Forward 24h
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleUserClaimYield(inv.id)}
+                                disabled={!canClaim}
+                                className={`flex-1 md:flex-none font-sans font-extrabold text-xs px-4 py-1.5 rounded transition-all select-none cursor-pointer border-none ${
+                                  canClaim
+                                    ? 'bg-[#0ecb81] text-black font-extrabold uppercase'
+                                    : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                }`}
+                              >
+                                Claim Interest
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {userTab === 'finance' && (
+              <div className="flex flex-col gap-5">
+                
+                {/* Segment toggle slider */}
+                <div className="flex gap-2 p-1 bg-[#12161a] border border-[#2b3139] rounded-lg">
+                  <button
+                    type="button"
+                    className="flex-1 py-1.5 text-xs font-bold rounded bg-[#1e2329] border border-[#f0b90b]/20 text-[#f0b90b]"
+                  >
+                    📥 Deposit USDT via M-Pesa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      alert("Strict System Guard: Withdrawal requests can be initiated inside the cashout panel below. It unlocks automatically once you join the platform and secure at least 1 staking contract.");
+                    }}
+                    className="flex-1 py-1.5 text-xs font-bold text-gray-400 hover:text-white rounded transition-all bg-transparent border-none cursor-pointer"
+                  >
+                    📤 Payout Withdrawal Panel
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+                  
+                  {/* LEFT COLUMN: Payment details instructions */}
+                  <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl p-5 flex flex-col gap-4">
+                    <h4 className="text-xs uppercase font-extrabold text-[#f0b90b] tracking-wider font-mono">
+                      🏦 M-Pesa Treasury Desk Setup
+                    </h4>
+                    
+                    <div className="bg-[#12161a] border border-[#2b3139] p-4 rounded-lg flex flex-col gap-2 relative">
+                      <div className="absolute top-0 right-0 bg-[#0ecb81] text-black text-[8px] font-bold px-1.5 py-0.5 uppercase font-mono rounded-bl tracking-wider font-mono">
+                        Real-Time
+                      </div>
+                      <span className="text-[10px] font-mono text-gray-450 block">SEND PAYMENTS DIRECTLY TO:</span>
+                      <div className="text-lg font-mono font-extrabold text-white tracking-widest">
+                        M-Pesa Number:
+                        <span className="text-[#f0b90b] block mt-1 text-2xl select-all">0797166504</span>
+                      </div>
+                      <span className="text-[10.5px] text-gray-400 leading-normal">
+                        Verify recipient details show the verified ledger merchant number before sending. Rate is fixed at 1 USDT = 130 KES (e.g., 10 USDT = Ksh 1,300, 20 USDT = Ksh 2,600).
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col gap-2.5 text-xs text-gray-300 leading-relaxed font-sans mt-1">
+                      <h5 className="font-extrabold text-white text-xs">📜 Deposit Step-By-Step:</h5>
+                      <span className="flex gap-2">
+                        <strong className="text-[#f0b90b]">1.</strong>
+                        Calculate KES amount based on 1 USDT = 130 KES, then send to <strong>0797 166 504</strong>.
+                      </span>
+                      <span className="flex gap-2">
+                        <strong className="text-[#f0b90b]">2.</strong>
+                        Take a screenshot of the completed M-Pesa payment receipt from your mobile.
+                      </span>
+                      <span className="flex gap-2">
+                        <strong className="text-[#f0b90b]">3.</strong>
+                        Upload the screenshot and type in the transaction reference code (e.g. SFG873HDU3).
+                      </span>
+                      <span className="flex gap-2">
+                        <strong className="text-[#f0b90b]">4.</strong>
+                        Submit details. Senior Admin reviews and credits your primary virtual wallet instantly!
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* RIGHT COLUMN: Deposit filing receipt form */}
+                  <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl p-5 shadow-lg">
+                    <h4 className="text-xs uppercase font-extrabold text-white tracking-wider flex items-center gap-1.5 font-mono mb-4">
+                      📁 Verify & File Payment Reciept
+                    </h4>
+
+                    <form onSubmit={handleUserSubmitDeposit} className="flex flex-col gap-4">
+                      <div>
+                        <label className="text-[11px] font-mono text-gray-400 uppercase font-bold block mb-1.5">
+                          Deposit Capital (Minimum $10.00 USDT / Ksh 1,300 KES)
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min={10}
+                            step="any"
+                            value={depositFieldAmount}
+                            onChange={(e) => setDepositFieldAmount(e.target.value)}
+                            placeholder="e.g. 10"
+                            className="w-full bg-[#12161a] border border-[#2b3139] focus:border-[#f0b90b] rounded px-3 py-2 text-sm text-white font-mono outline-none"
+                            required
+                          />
+                          <span className="absolute right-3 top-2 text-xs text-gray-500 font-mono">USDT</span>
+                        </div>
+                        {depositFieldAmount && !isNaN(parseFloat(depositFieldAmount)) && (
+                          <div className="mt-2 text-xs text-[#f0b90b] font-mono flex flex-col gap-1 bg-[#12161a] border border-[#2b3139]/80 p-2 rounded">
+                            <div className="flex justify-between items-center text-[10px] text-gray-400">
+                              <span>Conversion Rate:</span>
+                              <span>1 USDT = 130 KES</span>
+                            </div>
+                            <div className="flex justify-between items-center pt-1 border-t border-[#2b3139]/50">
+                              <span className="font-sans">💰 Amount to Pay in KES:</span>
+                              <strong className="text-white text-xs font-mono">
+                                Ksh {(parseFloat(depositFieldAmount) * 130).toLocaleString()} KES
+                              </strong>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-mono text-gray-400 uppercase font-bold block mb-1.5">
+                          M-Pesa Transaction Reference Code
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={15}
+                          value={depositMpesaCode}
+                          onChange={(e) => setDepositMpesaCode(e.target.value)}
+                          placeholder="e.g. SGG8HJDY83"
+                          className="w-full bg-[#12161a] border border-[#2b3139] focus:border-[#f0b90b] rounded px-3 py-2 text-sm text-white font-mono uppercase outline-none"
+                          required
+                        />
+                      </div>
+
+                      {/* File upload widget */}
+                      <div>
+                        <label className="text-[11px] font-mono text-gray-400 uppercase font-bold block mb-1.5">
+                          M-Pesa Screenshot Proof Of Payment
+                        </label>
+                        
+                        {depositScreenshotBase64 ? (
+                          <div className="bg-[#12161a] border border-[#2b3139] rounded p-2 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <img
+                                src={depositScreenshotBase64}
+                                alt="Proof thumbnail"
+                                className="w-10 h-10 object-cover rounded border border-gray-750"
+                              />
+                              <div>
+                                <span className="text-[10px] text-[#0ecb81] font-bold block">✓ File Loaded</span>
+                                <span className="text-[8.5px] text-gray-500 font-mono">Proof ready for verification</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setDepositScreenshotBase64('')}
+                              className="text-[10px] text-red-400 hover:text-white px-2 py-0.5 hover:bg-red-500/10 rounded border-none cursor-pointer bg-transparent"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="relative border-2 border-dashed border-[#2b3139] hover:border-[#f0b90b]/50 rounded-lg p-4 bg-[#12161a] transition-all text-center cursor-pointer">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.readAsDataURL(file);
+                                  reader.onload = () => {
+                                    if (typeof reader.result === 'string') {
+                                      setDepositScreenshotBase64(reader.result);
+                                      triggerToast("Screenshot parsed successfully!");
+                                    }
+                                  };
+                                }
+                              }}
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            />
+                            <div className="flex flex-col items-center gap-1">
+                              <Upload size={22} className="text-gray-500" />
+                              <span className="text-xs text-gray-300 font-medium font-sans">Select Payment Screenshot</span>
+                              <span className="text-[9px] text-gray-500 font-mono">JPG, PNG allowed</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isDepositSubmitting || !depositFieldAmount || !depositMpesaCode || !depositScreenshotBase64}
+                        className={`w-full py-2.5 text-xs uppercase font-extrabold rounded select-none shadow border-none transition-all flex items-center justify-center gap-1.5 ${
+                          !depositFieldAmount || !depositMpesaCode || !depositScreenshotBase64 || isDepositSubmitting
+                            ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                            : 'bg-[#f0b90b] hover:bg-[#dfaa0a] text-black cursor-pointer'
+                        }`}
+                      >
+                        {isDepositSubmitting ? ' Filing Verification...' : '⚡ Confirm Payment & File Proof'}
+                      </button>
+                    </form>
+                  </div>
+
+                </div>
+
+                {/* WITHDRAWAL FORM CARD (Separated inside finance desk below) */}
+                <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl p-5 mt-4">
+                  <div className="flex items-center justify-between border-b border-[#2b3139] pb-3 mb-4 font-mono text-xs">
+                    <h4 className="text-xs uppercase font-extrabold text-[#f0b90b] tracking-wider flex items-center gap-1.5 font-mono">
+                      📤 Request cashout payout
+                    </h4>
+                    <span className="text-[10px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded font-bold font-mono">
+                      Strict Account Check Active
+                    </span>
+                  </div>
+
+                  {/* Check if user active investments */}
+                  {(() => {
+                    const localReqs = JSON.parse(localStorage.getItem('binance_investment_requests') || '[]');
+                    const hasInvestments = activeInvestments.length > 0 || localReqs.some((r: any) => r.username === currentUser?.username);
+                    if (!hasInvestments) {
+                      return (
+                        <div className="bg-red-500/10 border border-red-500/20 rounded p-4 flex gap-3 text-xs text-red-400 leading-relaxed font-sans">
+                          <div className="text-base">🚨</div>
+                          <div>
+                            <strong>Cashout Withdrawal Feature Locked!</strong>
+                            <p className="mt-1 text-gray-450 leading-normal font-sans">
+                              To prevent spam, user registers have a mandatory staking clause. The joining reward bonus ($1.00 USDT) and any interest cashouts will unlock automatically once you join the platform and secure at least one fixed staking package. Head over to the Staking Packages page to get started.
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <form onSubmit={handleUserSubmitWithdrawal} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                        <div className="md:col-span-1">
+                          <label className="text-[11px] font-mono text-gray-400 uppercase font-bold block mb-1">
+                            Withdrawal Amount (USDT)
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            value={withdrawFieldAmount}
+                            onChange={(e) => setWithdrawFieldAmount(e.target.value)}
+                            placeholder="e.g. 15.00"
+                            className="w-full bg-[#12161a] border border-[#2b3139] focus:border-[#f0b90b] rounded px-3 py-2 text-sm text-white font-mono outline-none"
+                            required
+                          />
+                        </div>
+
+                        <div className="md:col-span-1">
+                          <label className="text-[11px] font-mono text-gray-400 uppercase font-bold block mb-1">
+                            Select Payout Phone Number
+                          </label>
+                          <input
+                            type="tel"
+                            maxLength={12}
+                            value={withdrawMpesaNumber}
+                            onChange={(e) => setWithdrawMpesaNumber(e.target.value)}
+                            placeholder="e.g. 07XXXXXXXX"
+                            className="w-full bg-[#12161a] border border-[#2b3139] focus:border-[#f0b90b] rounded px-3 py-2 text-sm text-white font-mono outline-none"
+                            required
+                          />
+                        </div>
+
+                        <div className="md:col-span-1">
+                          <button
+                            type="submit"
+                            disabled={isWithdrawSubmitting}
+                            className="w-full bg-red-650 hover:bg-red-600 text-white font-mono text-xs font-bold py-2 px-4 rounded transition-all cursor-pointer shadow outline-none border-none py-2.5"
+                          >
+                            {isWithdrawSubmitting ? "Dispatching..." : "⚡ Dispatch Outward Payout"}
+                          </button>
+                        </div>
+                      </form>
+                    );
+                  })()}
+                </div>
+
+              </div>
+            )}
+
+            {userTab === 'history' && (
+              <div className="flex flex-col gap-5">
+                <div className="border-b border-[#2b3139] pb-3 text-mono">
+                  <h3 className="text-sm font-extrabold text-white uppercase tracking-wider">
+                    📜 Treasuries & Stakings Ledger logs
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Your full transactional auditing trail. Verify pending approvals, historical deposits, and outbound cashout releases.
+                  </p>
+                </div>
+
+                {/* Deposits and Withdrawals table */}
+                <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl overflow-hidden shadow-md">
+                  <div className="bg-[#12161a] border-b border-[#2b3139] px-4 py-3 font-mono">
+                    <h4 className="text-[10px] uppercase font-bold tracking-wider text-gray-400">
+                      Payments & Payouts Statement
+                    </h4>
+                  </div>
+
+                  {(() => {
+                    const reqs = JSON.parse(localStorage.getItem('binance_transaction_requests') || '[]')
+                      .filter((r: any) => r.username === currentUser?.username);
+                    
+                    if (reqs.length === 0) {
+                      return (
+                        <div className="py-12 text-center text-xs text-gray-500 italic">
+                          No pending or archived payment transactions found in your records.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="overflow-x-auto font-mono">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-[#1c2127]/60 text-gray-400 border-b border-[#262c33] text-[10px] uppercase font-bold">
+                              <th className="px-4 py-3">Timestamp / Type</th>
+                              <th className="px-4 py-3">Transaction Code</th>
+                              <th className="px-4 py-3 text-right">Credit / Fees</th>
+                              <th className="px-4 py-3 text-center">Status</th>
+                              <th className="px-4 py-3 text-center">Receipt Proof</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#232930]/40">
+                            {reqs.map((r: any) => (
+                              <tr key={r.id} className="hover:bg-[#1f252d]/40 transition-colors">
+                                <td className="px-4 py-3.5">
+                                  <span className="text-[10px] text-gray-550 block mb-1">{r.timestamp}</span>
+                                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider font-mono ${
+                                    r.type === 'deposit' ? 'bg-[#0ecb81]/15 text-[#0ecb81]' : 'border border-red-500/20 text-red-500'
+                                  }`}>
+                                    {r.type}
+                                  </span>
+                                </td>
+                                
+                                <td className="px-4 py-3.5 text-gray-200 font-bold select-all">
+                                  {r.refHash || "CASH-DESK"}
+                                  <span className="text-[9px] text-gray-500 block font-normal mt-0.5">{r.network}</span>
+                                </td>
+
+                                <td className="px-4 py-3.5 text-right font-bold text-white text-sm">
+                                  +${r.amount} <span className="text-[10px] text-gray-400 font-normal">USDT</span>
+                                  {r.type === 'withdrawal' && (
+                                    <span className="text-[9px] text-red-500/80 block font-mono">
+                                      Flat Fee: -9%
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="px-4 py-3.5 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider font-mono ${
+                                    r.status === 'pending' ? 'bg-yellow-500/15 text-yellow-400' :
+                                    r.status === 'approved' ? 'bg-[#0ecb81]/15 text-[#0ecb81]' : 'bg-red-500/15 text-red-500'
+                                  }`}>
+                                    {r.status}
+                                  </span>
+                                </td>
+
+                                <td className="px-4 py-3.5 text-center">
+                                  {r.screenshotBase64 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setUserSelectedScreenshot(r.screenshotBase64)}
+                                      className="bg-gray-850 hover:bg-gray-800 text-xs px-2.5 py-1 rounded text-gray-300 font-mono text-[9.5px] font-bold cursor-pointer border border-[#2b3139]"
+                                    >
+                                      🔍 View Screenshot
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-500 italic text-[10px]">No receipt</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Staking packages requests table */}
+                <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl overflow-hidden shadow-md mt-1">
+                  <div className="bg-[#12161a] border-b border-[#2b3139] px-4 py-3 font-mono">
+                    <h4 className="text-[10px] uppercase font-bold tracking-wider text-gray-400">
+                      Fixed Contract Subscription Applications
+                    </h4>
+                  </div>
+
+                  {(() => {
+                    const localReqs = JSON.parse(localStorage.getItem('binance_investment_requests') || '[]')
+                      .filter((r: any) => r.username === currentUser?.username);
+                    
+                    if (localReqs.length === 0) {
+                      return (
+                        <div className="py-12 text-center text-xs text-gray-500 italic">
+                          No pending package activations.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="overflow-x-auto font-mono text-xs text-left">
+                        <table className="w-full">
+                          <thead className="bg-[#1c2127]/60 text-gray-400 border-b border-[#262c33] text-[10px] uppercase font-bold">
+                            <tr>
+                              <th className="px-4 py-3">Plan Name / Term</th>
+                              <th className="px-4 py-3 text-right">Deposit Capital</th>
+                              <th className="px-4 py-3 text-right">Daily Yield Return</th>
+                              <th className="px-4 py-3 text-center">Approval Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#232930]/40">
+                            {localReqs.map((inv: any) => (
+                              <tr key={inv.id} className="hover:bg-[#1f252d]/40 transition-colors">
+                                <td className="px-4 py-3.5">
+                                  <strong className="text-white block">{inv.planName}</strong>
+                                  <span className="text-[9.5px] text-gray-500 mt-0.5 block">{inv.durationDays} Days Duration</span>
+                                </td>
+
+                                <td className="px-4 py-3.5 text-right font-bold text-white text-sm">
+                                  ${inv.depositAmount} USDT
+                                </td>
+
+                                <td className="px-4 py-3.5 text-right font-bold text-[#0ecb81]">
+                                  +{inv.yieldDaily}% daily
+                                  <span className="text-[9px] text-gray-405 block font-normal mt-0.5">${inv.yieldDailyUsd} USDT / Day</span>
+                                </td>
+
+                                <td className="px-4 py-3.5 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider font-mono ${
+                                    inv.status === 'pending' ? 'bg-yellow-500/15 text-yellow-400' :
+                                    inv.status === 'approved' ? 'bg-[#0ecb81]/15 text-[#0ecb81]' : 'bg-red-500/15 text-red-500'
+                                  }`}>
+                                    {inv.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+              </div>
+            )}
+
+            {userTab === 'trade' && (
+              <div className="flex flex-col gap-5 text-sans">
+                <div className="border-b border-[#2b3139] pb-3 text-mono">
+                  <h3 className="text-xs uppercase font-extrabold text-[#f0b90b] tracking-wider">
+                    📈 Spot Ledger Candlestick Chart
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5 text-sans">
+                    Real-time liquidity streams showing candle feeds. Optimized and lightweight to support seamless mobile rendering.
+                  </p>
+                </div>
+
+                {/* Minimized Chart inside standard container */}
+                <div className="bg-[#161a1e] border border-[#2b3139] rounded-xl overflow-hidden p-3 h-[400px] flex flex-col gap-2">
+                  <div className="flex justify-between items-center text-xs font-mono border-b border-[#2b3139] pb-2 text-gray-400">
+                    <div>
+                      <span className="text-white font-bold">BTC / USDT Spot</span>
+                    </div>
+                    <div className="flex gap-3">
+                      <span>Index: <strong className="text-[#0ecb81]">${activeCoin.price.toLocaleString()}</strong></span>
+                      <span>Change: <strong className="text-[#0ecb81]">{activeCoin.change24h}%</strong></span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1 w-full bg-[#12161a] rounded overflow-hidden flex flex-col justify-between">
+                    <TradingChart candles={candles} coin={activeCoin} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+
+          {/* COMPACT FLOATING NAVIGATION BOTTOM BAR FOR ALL DEVICES */}
+          <div className="fixed bottom-0 left-0 right-0 bg-[#12161a] border-t border-[#2b3139] px-4 py-2 z-40 flex justify-around items-center shadow-2xl">
+            <button
+              onClick={() => setUserTab('home')}
+              className={`flex flex-col items-center gap-1 bg-transparent border-none outline-none cursor-pointer p-1.5 transition-colors ${
+                userTab === 'home' ? 'text-[#f0b90b]' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Home size={18} />
+              <span className="text-[9.5px] font-mono font-medium">Dashboard</span>
+            </button>
+
+            <button
+              onClick={() => setUserTab('packages')}
+              className={`flex flex-col items-center gap-1 bg-transparent border-none outline-none cursor-pointer p-1.5 transition-colors ${
+                userTab === 'packages' ? 'text-[#f0b90b]' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Layers size={18} />
+              <span className="text-[9.5px] font-mono font-medium">Staking</span>
+            </button>
+
+            <button
+              onClick={() => setUserTab('finance')}
+              className={`flex flex-col items-center gap-1 bg-transparent border-none outline-none cursor-pointer p-1.5 transition-colors ${
+                userTab === 'finance' ? 'text-[#f0b90b]' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Landmark size={18} />
+              <span className="text-[9.5px] font-mono font-medium">Finance</span>
+            </button>
+
+            <button
+              onClick={() => setUserTab('history')}
+              className={`flex flex-col items-center gap-1 bg-transparent border-none outline-none cursor-pointer p-1.5 transition-colors ${
+                userTab === 'history' ? 'text-[#f0b90b]' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <History size={18} />
+              <span className="text-[9.5px] font-mono font-medium font-bold">Ledgers</span>
+            </button>
+
+            <button
+              onClick={() => setUserTab('trade')}
+              className={`flex flex-col items-center gap-1 bg-transparent border-none outline-none cursor-pointer p-1.5 transition-colors ${
+                userTab === 'trade' ? 'text-[#f0b90b]' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <TrendingUp size={18} />
+              <span className="text-[9.5px] font-mono font-medium">Spot Trade</span>
+            </button>
+          </div>
+
+          {/* USER SCREENSHOT LIGHTBOX EXCLUSIVE */}
+          {userSelectedScreenshot && (
+            <div className="fixed inset-0 bg-black/95 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setUserSelectedScreenshot(null)}>
+              <div className="bg-[#1e2329] border border-[#2b3139] p-4 rounded-lg max-w-sm w-full flex flex-col gap-3 relative" onClick={(e) => e.stopPropagation()}>
+                <div className="flex justify-between items-center pb-2 border-b border-[#2b3139]">
+                  <h3 className="text-xs uppercase font-extrabold text-[#f0b90b] font-mono">My Receipt Proof</h3>
+                  <button
+                    type="button"
+                    onClick={() => setUserSelectedScreenshot(null)}
+                    className="text-gray-400 hover:text-white hover:bg-gray-800 px-2 py-0.5 rounded text-xs font-bold bg-transparent border-none cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="flex justify-center bg-black rounded overflow-hidden p-2 border border-[#2b3139]/50">
+                  <img
+                    src={userSelectedScreenshot}
+                    alt="M-Pesa Receipt Upload"
+                    className="max-h-[50vh] object-contain rounded"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <span className="text-[9px] text-gray-500 font-mono text-center">
+                  This screenshot proof of payment has been securely submitted to the core review node.
+                </span>
+              </div>
+            </div>
+          )}
+
         </div>
       ) : (
         <>

@@ -1040,14 +1040,6 @@ export const PortfolioCenter: React.FC<PortfolioCenterProps> = ({
               ${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </span>
-          <button
-            id="faucet-injector-btn"
-            onClick={onRunFaucet}
-            className="bg-[#2b3139] hover:bg-yellow-500 hover:text-black py-1 px-3 text-[10px] font-bold text-white rounded cursor-pointer transition-all flex items-center gap-1"
-          >
-            <Coins size={12} />
-            USDT Faucet (+$10,000)
-          </button>
         </div>
       </div>
 
